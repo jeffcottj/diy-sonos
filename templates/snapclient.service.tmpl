@@ -1,0 +1,22 @@
+[Unit]
+Description=Snapcast client
+Documentation=https://github.com/badaix/snapcast
+After=network-online.target sound.target
+Wants=network-online.target sound.target
+
+[Service]
+ExecStart=/usr/bin/snapclient \
+    --host {{SERVER_IP}} \
+    --port {{SNAPSERVER__PORT}} \
+    --soundcard {{RESOLVED_AUDIO_DEVICE}} \
+    --latency {{SNAPCLIENT__LATENCY_MS}} \
+    --instance {{SNAPCLIENT__INSTANCE}} \
+    --player alsa \
+    --logsink system
+Restart=on-failure
+RestartSec=10s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

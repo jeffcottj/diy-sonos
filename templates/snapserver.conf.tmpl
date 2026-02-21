@@ -1,0 +1,9 @@
+[http]
+enabled = true
+port = {{SNAPSERVER__CONTROL_PORT}}
+
+[stream]
+sampleformat = {{SNAPSERVER__SAMPLEFORMAT}}
+codec = {{SNAPSERVER__CODEC}}
+buffer = {{SNAPSERVER__BUFFER_MS}}
+source = pipe://{{SNAPSERVER__FIFO_PATH}}?name=Spotify&mode=read&dryout_ms=2000

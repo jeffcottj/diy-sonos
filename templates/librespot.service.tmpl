@@ -1,0 +1,27 @@
+[Unit]
+Description=Librespot (Spotify Connect)
+Documentation=https://github.com/librespot-org/librespot
+After=network-online.target
+Wants=network-online.target
+Before=snapserver.service
+
+[Service]
+ExecStart=/usr/bin/librespot \
+    --name "{{SPOTIFY__DEVICE_NAME}}" \
+    --device-type {{SPOTIFY__DEVICE_TYPE}} \
+    --bitrate {{SPOTIFY__BITRATE}} \
+    --backend pipe \
+    --device {{SNAPSERVER__FIFO_PATH}} \
+    --format S16 \
+    --initial-volume {{SPOTIFY__INITIAL_VOLUME}} \
+    --enable-volume-normalisation \
+    --cache {{SPOTIFY__CACHE_DIR}} \
+    --disable-audio-cache \
+    --enable-oauth
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

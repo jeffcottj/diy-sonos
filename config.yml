@@ -1,0 +1,22 @@
+server_ip: "192.168.1.100"        # IP of the Pi 5 (used by clients to connect)
+
+spotify:
+  device_name: "DIY Sonos"        # Name shown in Spotify app
+  bitrate: 320                    # 96 | 160 | 320 kbps
+  normalise: true                 # Volume normalisation
+  initial_volume: 75              # 0-100
+  cache_dir: "/var/cache/librespot"  # OAuth credential cache
+  device_type: "speaker"          # Icon shown in Spotify app
+
+snapserver:
+  fifo_path: "/tmp/snapfifo"
+  sampleformat: "44100:16:2"      # Must match librespot output
+  codec: "flac"                   # flac | pcm
+  buffer_ms: 1000                 # End-to-end latency target
+  port: 1704
+  control_port: 1780
+
+snapclient:
+  audio_device: "auto"            # "auto" = detect first USB audio card; or "hw:1,0" etc.
+  latency_ms: 0                   # Per-client latency trim
+  instance: 1

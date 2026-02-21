@@ -1,0 +1,16 @@
+[Unit]
+Description=Snapcast server
+Documentation=https://github.com/badaix/snapcast
+After=network-online.target librespot.service
+Wants=network-online.target
+Requires=librespot.service
+
+[Service]
+ExecStart=/usr/bin/snapserver --config=/etc/snapserver.conf
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

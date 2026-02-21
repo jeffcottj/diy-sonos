@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# setup-client.sh — install and configure snapclient on a Pi Zero 2 W
+# Sourced by setup.sh after common.sh is loaded and config is parsed.
+
+set -euo pipefail
+
+SNAPCAST_VER="0.31.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+echo ""
+echo "=========================================="
+echo " DIY Sonos — Client Setup"
+echo "=========================================="
+echo ""
+
+# ---------------------------------------------------------------------------
+# 1. OS / arch detection
+# ---------------------------------------------------------------------------
+detect_os_codename
+detect_arch
+
+# ---------------------------------------------------------------------------
+# 2. Base dependencies
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Installing base dependencies ---"
+apt-get update -qq
+pkg_install wget curl ca-certificates alsa-utils
+
+# ---------------------------------------------------------------------------
+# 3. Install snapclient
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Installing snapclient ---"
+
+SNAP_DEB_URL="https://github.com/badaix/snapcast/releases/download/v${SNAPCAST_VER}/snapclient_${SNAPCAST_VER}-1_${ARCH_DEB}_${OS_CODENAME}.deb"
+install_deb "$SNAP_DEB_URL"
+
+# The snapclient deb may pull in snapserver as a dependency — mask it so it
+# doesn't start on client machines.
+systemctl mask snapserver.service 2>/dev/null || true
+systemctl stop snapserver.service 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 4. Resolve audio output device
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Resolving audio device ---"
+
+resolve_audio_device "$(cfg snapclient audio_device)"
+echo "Audio device: $RESOLVED_AUDIO_DEVICE"
+
+# ---------------------------------------------------------------------------
+# 5. Render systemd service unit
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Rendering systemd service unit ---"
+
+render_template \
+    "$SCRIPT_DIR/templates/snapclient.service.tmpl" \
+    "/etc/systemd/system/snapclient.service"
+
+# ---------------------------------------------------------------------------
+# 6. Enable and start service
+# ---------------------------------------------------------------------------
+echo ""
+echo "--- Enabling snapclient ---"
+
+systemd_enable_restart snapclient
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+echo ""
+echo "=========================================="
+echo " Client setup complete!"
+echo "=========================================="
+echo ""
+echo "  Play music in Spotify → all speakers should sync automatically."
+echo ""
+echo "  Service status:"
+echo "     sudo systemctl status snapclient"
+echo "     sudo journalctl -u snapclient -f"
+echo ""
+echo "  Audio device in use: $RESOLVED_AUDIO_DEVICE"
+echo "  Server:              $(cfg server_ip) (override in config.yml if wrong)"
+echo ""
+echo "  To test audio output directly:"
+echo "     speaker-test -t wav -c 2 -D $RESOLVED_AUDIO_DEVICE"
+echo ""
