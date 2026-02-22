@@ -357,26 +357,60 @@ download_file() {
 # ---------------------------------------------------------------------------
 
 # detect_alsa_usb_device
-# Finds the first USB audio card from `aplay -l` and sets DETECTED_AUDIO_DEVICE.
-# Falls back to "default" if none found.
+# Finds the first USB audio card and sets DETECTED_AUDIO_DEVICE.
+# Uses plughw:CARD_NAME,0 (stable across reboots; enables format conversion).
+# Method 1: /proc/asound/cards — looks for "USB-Audio" driver identifier (reliable
+#   regardless of card display name).
+# Method 2: aplay -l string match — secondary, catches unusual driver names.
+# Falls back to first non-HDMI card, then "default" (warns loudly; "default" is
+# PipeWire-backed on modern Pi OS and will not work in a system service context).
 detect_alsa_usb_device() {
-    local card_num
-    card_num=$(aplay -l 2>/dev/null | awk '
-        /^card [0-9]+:/ {
-            card = $2
-            sub(/:$/, "", card)
-        }
-        /USB/ {
-            if (card != "") { print card; exit }
-        }
-    ')
+    local card_name="" fallback_name=""
 
-    if [[ -n "$card_num" ]]; then
-        DETECTED_AUDIO_DEVICE="hw:${card_num},0"
+    # Method 1: /proc/asound/cards — look for USB-Audio driver identifier
+    if [[ -f /proc/asound/cards ]]; then
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*[0-9]+[[:space:]]*\[([^]]+)\][[:space:]]*:[[:space:]]*([^-]+) ]]; then
+                local cur_name="${BASH_REMATCH[1]}"
+                local cur_driver="${BASH_REMATCH[2]}"
+                cur_name="${cur_name%"${cur_name##*[![:space:]]}"}"
+                cur_driver="${cur_driver%"${cur_driver##*[![:space:]]}"}"
+                if [[ "$cur_driver" == "USB-Audio" ]]; then
+                    card_name="$cur_name"
+                    break
+                elif [[ -z "$fallback_name" && "${cur_name,,}" != *hdmi* ]]; then
+                    fallback_name="$cur_name"
+                fi
+            fi
+        done < /proc/asound/cards
+    fi
+
+    # Method 2: aplay -l string match (secondary, catches unusual driver names)
+    if [[ -z "$card_name" ]]; then
+        local aplay_num
+        aplay_num=$(aplay -l 2>/dev/null | awk '
+            /^card [0-9]+:/ { card=$2; sub(/:$/,"",card) }
+            /USB/ { if (card!="") { print card; exit } }
+        ')
+        if [[ -n "$aplay_num" ]]; then
+            card_name=$(aplay -l 2>/dev/null | awk -v n="$aplay_num" '
+                $0 ~ "^card "n":" { match($0,/^card [0-9]+: ([^ []+)/,a); print a[1]; exit }
+            ')
+            [[ -z "$card_name" ]] && card_name="$aplay_num"
+        fi
+    fi
+
+    if [[ -n "$card_name" ]]; then
+        DETECTED_AUDIO_DEVICE="plughw:${card_name},0"
         echo "Detected USB audio device: $DETECTED_AUDIO_DEVICE"
+    elif [[ -n "$fallback_name" ]]; then
+        DETECTED_AUDIO_DEVICE="plughw:${fallback_name},0"
+        echo "No USB audio device found; using first non-HDMI card: $DETECTED_AUDIO_DEVICE" >&2
     else
         DETECTED_AUDIO_DEVICE="default"
-        echo "No USB audio device found, using 'default'"
+        echo "Warning: no suitable audio hardware found; falling back to 'default'" >&2
+        echo "  'default' will NOT work for snapclient.service on modern Pi OS (PipeWire)." >&2
+        echo "  Set snapclient.audio_device explicitly in config.yml and redeploy." >&2
     fi
     export DETECTED_AUDIO_DEVICE
 }

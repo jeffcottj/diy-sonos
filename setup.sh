@@ -532,6 +532,21 @@ run_doctor_mode() {
         echo "- FIFO checks"
         doctor_check_fifo "$(cfg snapserver fifo_path /tmp/snapfifo)" || failed=1
 
+        echo "- FIFO activity check"
+        local fifo_path
+        fifo_path="$(cfg snapserver fifo_path /tmp/snapfifo)"
+        if [[ -p "$fifo_path" ]]; then
+            local fifo_writers
+            fifo_writers=$(find /proc/*/fd -maxdepth 1 2>/dev/null -lname "$fifo_path" | wc -l || true)
+            if [[ "$fifo_writers" -gt 0 ]]; then
+                doctor_report pass "FIFO ${fifo_path} has ${fifo_writers} active file descriptor(s) — librespot is streaming."
+            else
+                doctor_report warn "FIFO ${fifo_path} has no active writers." \
+                    "At idle this is expected. During active Spotify playback it indicates librespot is not streaming to snapserver." \
+                    "sudo journalctl -u librespot -n 30 --no-pager"
+            fi
+        fi
+
         echo "- Recent error excerpts"
         doctor_show_recent_errors librespot 15
         doctor_show_recent_errors snapserver 15
@@ -553,15 +568,26 @@ run_doctor_mode() {
 
         echo "- Audio device resolution"
         resolve_audio_device "$(cfg snapclient audio_device auto)"
-        doctor_report pass "Resolved audio device: ${RESOLVED_AUDIO_DEVICE}"
-        if command -v aplay >/dev/null 2>&1; then
-            if aplay -L 2>/dev/null | grep -Fxq "${RESOLVED_AUDIO_DEVICE}"; then
-                doctor_report pass "Resolved audio device is present in ALSA device list."
-            else
-                doctor_report warn "Resolved audio device was not matched exactly in 'aplay -L'." "The selected ALSA target may not be the physical output you expect, which can cause silence or playback on the wrong device." "aplay -l && aplay -L"
-            fi
+        if [[ "$RESOLVED_AUDIO_DEVICE" == "default" ]]; then
+            doctor_report fail "Resolved audio device is 'default' — will not work for snapclient.service." \
+                "On Pi OS (Bookworm+), 'default' is PipeWire-backed and only works in interactive user sessions, not system services." \
+                "Set snapclient.audio_device to a plughw:/hw: device in config.yml and redeploy: sudo ./setup.sh client"
+            failed=1
         else
-            doctor_report warn "aplay is not available; skipped ALSA device existence check." "Without ALSA utilities, doctor cannot verify that the configured output device exists." "sudo apt-get install -y alsa-utils"
+            doctor_report pass "Resolved audio device: ${RESOLVED_AUDIO_DEVICE}"
+            if command -v aplay >/dev/null 2>&1; then
+                local card_id="${RESOLVED_AUDIO_DEVICE##*:}"
+                card_id="${card_id%%,*}"
+                if aplay -l 2>/dev/null | grep -q "${card_id}"; then
+                    doctor_report pass "Audio device card '${card_id}' confirmed in ALSA hardware list (aplay -l)."
+                else
+                    doctor_report warn "Audio device card '${card_id}' not found in 'aplay -l'." \
+                        "The configured soundcard may not be present or enumerated differently." \
+                        "aplay -l"
+                fi
+            else
+                doctor_report warn "aplay is not available; skipped ALSA device existence check." "Without ALSA utilities, doctor cannot verify that the configured output device exists." "sudo apt-get install -y alsa-utils"
+            fi
         fi
 
         echo "- Recent error excerpts"

@@ -81,6 +81,20 @@ echo "Audio device: $RESOLVED_AUDIO_DEVICE"
 
 set_client_output_volume_max
 
+# Validate that the resolved audio device is usable in a system service
+if [[ "$RESOLVED_AUDIO_DEVICE" == "default" ]]; then
+    echo "" >&2
+    echo "WARNING: audio device resolved to 'default'." >&2
+    echo "  snapclient.service will fail to open this device on Pi OS (PipeWire context)." >&2
+    echo "  Set snapclient.audio_device in config.yml to a specific device, e.g.:" >&2
+    echo "    snapclient:" >&2
+    echo "      audio_device: \"plughw:Device,0\"" >&2
+    echo "" >&2
+    echo "  Available audio hardware:" >&2
+    aplay -l 2>/dev/null | grep '^card' | sed 's/^/    /' >&2
+    echo "" >&2
+fi
+
 # ---------------------------------------------------------------------------
 # 5. Render systemd service unit
 # ---------------------------------------------------------------------------
