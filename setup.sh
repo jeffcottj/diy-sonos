@@ -11,12 +11,14 @@ Usage:
   sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 init [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
+  sudo $0 doctor server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
 
 Modes:
   init       Guided config generator (interactive by default, supports flags)
   preflight  Run fast validation checks only (no install/configure)
   server     Run preflight, then install/configure server services
   client     Run preflight, then install/configure client services
+  doctor     Report runtime health checks for server/client services
 USAGE
     exit 1
 }
@@ -302,6 +304,88 @@ run_preflight_mode() {
     echo "Preflight passed for '$role'."
 }
 
+run_doctor_mode() {
+    local role="$1"
+    local failed=0
+
+    require_root
+
+    echo ""
+    echo "=========================================="
+    echo " DIY Sonos — Doctor (${role})"
+    echo "=========================================="
+
+    if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+        echo "Error: default config.yml not found at $DEFAULT_CONFIG" >&2
+        return 1
+    fi
+
+    if ! python3 -c "import yaml" 2>/dev/null; then
+        echo "Error: python3-yaml is required for doctor mode. Install with: sudo apt-get install -y python3-yaml" >&2
+        return 1
+    fi
+
+    parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
+    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
+
+    echo ""
+    if [[ "$role" == "server" ]]; then
+        echo "- Service checks"
+        doctor_check_librespot_service || failed=1
+        doctor_check_snapserver_service || failed=1
+
+        echo "- Port/listener checks"
+        doctor_check_listener "$(cfg snapserver port 1704)" "snapserver" || failed=1
+        doctor_check_listener "$(cfg snapserver control_port 1780)" "snapserver" || failed=1
+
+        echo "- FIFO checks"
+        doctor_check_fifo "$(cfg snapserver fifo_path /tmp/snapfifo)" || failed=1
+
+        echo "- Recent error excerpts"
+        doctor_show_recent_errors librespot 15
+        doctor_show_recent_errors snapserver 15
+    else
+        echo "- Service checks"
+        doctor_check_snapclient_service || failed=1
+
+        echo "- Key connectivity checks"
+        local server_ip
+        local server_port
+        server_ip="$(cfg server_ip)"
+        server_port="$(cfg snapserver port 1704)"
+        if timeout 3 bash -c "</dev/tcp/${server_ip}/${server_port}" 2>/dev/null; then
+            doctor_report pass "Can connect to snapserver at ${server_ip}:${server_port}."
+        else
+            doctor_report fail "Cannot connect to snapserver at ${server_ip}:${server_port}." "Check server reachability/firewall, then run: nc -vz ${server_ip} ${server_port}"
+            failed=1
+        fi
+
+        echo "- Audio device resolution"
+        resolve_audio_device "$(cfg snapclient audio_device auto)"
+        doctor_report pass "Resolved audio device: ${RESOLVED_AUDIO_DEVICE}"
+        if command -v aplay >/dev/null 2>&1; then
+            if aplay -L 2>/dev/null | grep -Fxq "${RESOLVED_AUDIO_DEVICE}"; then
+                doctor_report pass "Resolved audio device is present in ALSA device list."
+            else
+                doctor_report warn "Resolved audio device was not matched exactly in 'aplay -L'." "Inspect devices with: aplay -l && aplay -L"
+            fi
+        else
+            doctor_report warn "aplay is not available; skipped ALSA device existence check." "Install ALSA utils: sudo apt-get install -y alsa-utils"
+        fi
+
+        echo "- Recent error excerpts"
+        doctor_show_recent_errors snapclient 15
+    fi
+
+    echo ""
+    if [[ $failed -eq 0 ]]; then
+        echo "Doctor completed: all critical checks passed for '${role}'."
+    else
+        echo "Doctor completed: one or more critical checks failed for '${role}'."
+        return 1
+    fi
+}
+
 MODE="${1:-}"
 [[ -n "$MODE" ]] || usage
 shift
@@ -314,10 +398,10 @@ BITRATE=""
 NORMALISE=""
 INITIAL_VOLUME=""
 
-if [[ "$MODE" == "preflight" ]]; then
+if [[ "$MODE" == "preflight" || "$MODE" == "doctor" ]]; then
     ROLE="${1:-}"
     if [[ "$ROLE" != "server" && "$ROLE" != "client" ]]; then
-        echo "Error: preflight mode requires a role: server or client" >&2
+        echo "Error: $MODE mode requires a role: server or client" >&2
         usage
     fi
     shift
@@ -369,6 +453,9 @@ case "$MODE" in
         ;;
     preflight)
         run_preflight_mode "$ROLE"
+        ;;
+    doctor)
+        run_doctor_mode "$ROLE"
         ;;
     server|client)
         run_preflight_mode "$MODE"
