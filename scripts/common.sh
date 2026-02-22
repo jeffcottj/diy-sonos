@@ -41,13 +41,37 @@ PYEOF
 }
 
 # cfg <section> <key> [default]
-# Read a config variable by section and key (mirrors YAML nesting).
+# cfg <key> [default]
+# Read a config variable by section and key (mirrors YAML nesting),
+# or read a top-level key directly.
 # e.g. cfg spotify device_name
+#      cfg server_ip
 cfg() {
     local section="${1^^}"
-    local key="${2^^}"
-    local default="${3:-}"
-    local var_name="${section}__${key}"
+    local key="${2-}"
+    local default="${3-}"
+    local var_name
+    local nested_var
+
+    if [[ -n "$key" ]]; then
+        key="${key^^}"
+        nested_var="${section}__${key}"
+    fi
+
+    if [[ $# -ge 3 ]]; then
+        var_name="$nested_var"
+    elif [[ $# -eq 2 ]]; then
+        if [[ -n "${!nested_var+x}" ]]; then
+            var_name="$nested_var"
+            default=""
+        else
+            var_name="$section"
+            default="${2-}"
+        fi
+    else
+        var_name="$section"
+    fi
+
     echo "${!var_name:-$default}"
 }
 
