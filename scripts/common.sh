@@ -638,6 +638,10 @@ doctor_check_snapserver_service() {
     doctor_check_systemd_service "snapserver" "sudo systemctl restart snapserver"
 }
 
+doctor_check_avahi_service() {
+    doctor_check_systemd_service "avahi-daemon" "sudo systemctl restart avahi-daemon"
+}
+
 doctor_check_snapclient_service() {
     doctor_check_systemd_service "snapclient" "sudo systemctl restart snapclient"
 }

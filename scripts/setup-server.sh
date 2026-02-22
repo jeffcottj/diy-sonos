@@ -27,6 +27,25 @@ echo "--- Installing base dependencies ---"
 apt_update_if_stale
 pkg_install wget curl ca-certificates alsa-utils avahi-daemon
 
+echo ""
+echo "--- Ensuring avahi-daemon is enabled and running ---"
+systemctl enable avahi-daemon.service
+if systemctl is-active --quiet avahi-daemon.service; then
+    systemctl restart avahi-daemon.service
+    echo "Restarted: avahi-daemon.service"
+else
+    systemctl start avahi-daemon.service
+    echo "Started: avahi-daemon.service"
+fi
+
+if systemctl is-active --quiet avahi-daemon.service; then
+    echo "avahi-daemon.service is active"
+else
+    echo "Error: avahi-daemon.service is not active after setup." >&2
+    echo "Remediation: run 'sudo systemctl status avahi-daemon --no-pager' and 'sudo journalctl -u avahi-daemon -n 50 --no-pager' to inspect the failure, then fix the host mDNS/Avahi issue and rerun 'sudo ./setup.sh server'." >&2
+    exit 1
+fi
+
 # Cleanup/mask legacy units and binaries before installing fresh units.
 cleanup_legacy_for_role server
 
