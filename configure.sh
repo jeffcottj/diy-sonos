@@ -352,8 +352,7 @@ print_summary_conflicts() {
     done
 
     if [[ -n "${seen[$server_ip]:-}" ]]; then
-        echo "  - Conflict: server IP ($server_ip) is also listed as a client IP."
-        has_conflict=1
+        echo "  - Note: server IP ($server_ip) is also listed as a client IP (server+client mode)."
     fi
 
     return $has_conflict
