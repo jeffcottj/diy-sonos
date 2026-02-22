@@ -77,6 +77,7 @@ FIFO_PATH="$(cfg snapserver fifo_path)"
 ensure_fifo "$FIFO_PATH"
 
 # systemd-tmpfiles.d entry so the FIFO is recreated after reboot
+snapshot_file /etc/tmpfiles.d/snapfifo.conf
 cat > /etc/tmpfiles.d/snapfifo.conf <<EOF
 p ${FIFO_PATH} 0660 root audio - -
 EOF
@@ -88,6 +89,7 @@ echo "Wrote /etc/tmpfiles.d/snapfifo.conf"
 echo ""
 echo "--- Configuring sysctl for FIFO access ---"
 
+snapshot_file /etc/sysctl.d/99-snapfifo.conf
 cat > /etc/sysctl.d/99-snapfifo.conf <<EOF
 # Allow librespot to write to the FIFO in /tmp without being blocked
 # by the kernel's protected_fifos mechanism.
@@ -102,6 +104,7 @@ echo "Applied fs.protected_fifos=0"
 echo ""
 echo "--- Rendering snapserver config ---"
 
+snapshot_file /etc/snapserver.conf
 render_template \
     "$SCRIPT_DIR/templates/snapserver.conf.tmpl" \
     "/etc/snapserver.conf"
@@ -119,10 +122,12 @@ else
     export SPOTIFY__NORMALISE_FLAG=""
 fi
 
+snapshot_file /etc/systemd/system/librespot.service
 render_template \
     "$SCRIPT_DIR/templates/librespot.service.tmpl" \
     "/etc/systemd/system/librespot.service"
 
+snapshot_file /etc/systemd/system/snapserver.service
 render_template \
     "$SCRIPT_DIR/templates/snapserver.service.tmpl" \
     "/etc/systemd/system/snapserver.service"

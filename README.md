@@ -99,11 +99,18 @@ curl -fsSL https://raw.githubusercontent.com/jeffcottj/diy-sonos/main/install.sh
 ```
 
 This installer resolves the latest tagged release, downloads the tarball, preserves existing local config files (`config.yml`, `.diy-sonos.generated.yml`, `clients.yml`) during upgrades, writes release metadata to `.diy-sonos-version`, and then offers to run the guided setup wizard.
+Re-running `install.sh` is safe: the release payload is replaced, then preserved local config files are restored automatically.
 
 To pin a specific release tag or re-install safely:
 
 ```bash
 ./install.sh --tag v0.1.0
+```
+
+To keep persistent snapshots of existing `config.yml` files before reinstalling:
+
+```bash
+./install.sh --tag v0.1.0 --backup-dir "$HOME/diy-sonos-install-backups"
 ```
 
 ### If this command fails
@@ -217,6 +224,57 @@ sudo ./setup.sh doctor client
 ```
 
 Doctor reports service states, key ports/listeners, FIFO presence on server, resolved audio device on client, and recent error excerpts from systemd journals. Failed checks include recommended remediation commands.
+
+### Retry safety and recovery
+
+Safe-to-rerun commands:
+
+```bash
+./deploy.sh
+sudo ./setup.sh upgrade
+sudo ./setup.sh doctor server
+sudo ./setup.sh doctor client
+```
+
+- `deploy.sh`: re-syncs repository contents and re-runs setup on each host. It is designed for retries after transient network/auth failures.
+- `setup.sh upgrade`: detects role and re-applies package + config setup idempotently.
+- `setup.sh doctor`: read-only health checks, no configuration writes.
+
+Recovering partially configured hosts:
+
+1. Run doctor to identify what failed:
+   ```bash
+   sudo ./setup.sh doctor server
+   sudo ./setup.sh doctor client
+   ```
+2. Re-run install for the role:
+   ```bash
+   sudo ./setup.sh upgrade --role server
+   sudo ./setup.sh upgrade --role client
+   ```
+3. If this was a multi-host deployment, re-run from your laptop:
+   ```bash
+   ./deploy.sh
+   ```
+
+Optional backup snapshots before major writes:
+
+```bash
+sudo ./setup.sh server --backup-snapshots
+sudo ./setup.sh client --backup-snapshots
+sudo ./setup.sh upgrade --backup-dir /var/backups/diy-sonos/manual-$(date +%Y%m%d-%H%M%S)
+./setup.sh init --backup-snapshots
+```
+
+When enabled, setup snapshots existing config/unit files before overwrite (e.g. `/etc/snapserver.conf`, `/etc/systemd/system/*.service`, and `.diy-sonos.generated.yml`) and prints exact restore commands.
+
+Restoring a previous file from snapshot:
+
+```bash
+sudo cp -a /var/backups/diy-sonos/<snapshot>/etc/systemd/system/snapclient.service /etc/systemd/system/snapclient.service
+sudo systemctl daemon-reload
+sudo systemctl restart snapclient
+```
 
 ---
 

@@ -372,6 +372,33 @@ resolve_audio_device() {
     export RESOLVED_AUDIO_DEVICE
 }
 
+
+# ---------------------------------------------------------------------------
+# Optional backup snapshots
+# ---------------------------------------------------------------------------
+
+# snapshot_file <target_path>
+# If BACKUP_SNAPSHOT_DIR is set and target exists, copy it into the snapshot tree
+# and print a restore command.
+snapshot_file() {
+    local target="$1"
+
+    if [[ -z "${BACKUP_SNAPSHOT_DIR:-}" ]]; then
+        return 0
+    fi
+
+    if [[ ! -e "$target" ]]; then
+        return 0
+    fi
+
+    local dest="$BACKUP_SNAPSHOT_DIR${target}"
+    mkdir -p "$(dirname "$dest")"
+    cp -a "$target" "$dest"
+
+    echo "Backup snapshot: $target -> $dest"
+    echo "  Restore: sudo cp -a '$dest' '$target'"
+}
+
 # ---------------------------------------------------------------------------
 # Template rendering
 # ---------------------------------------------------------------------------
