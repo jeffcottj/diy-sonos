@@ -125,17 +125,17 @@ fi
 echo ""
 
 echo "$(bold '2) Interactive configuration')"
-"$SCRIPT_DIR/configure.sh"
+bash "$SCRIPT_DIR/configure.sh"
 echo ""
 
 echo "$(bold '3) SSH key setup')"
-"$SCRIPT_DIR/configure.sh" --copy-keys
+bash "$SCRIPT_DIR/configure.sh" --copy-keys
 echo ""
 
 run_connectivity_check
 
 echo "$(bold '5) Deploying DIY Sonos')"
-"$SCRIPT_DIR/deploy.sh"
+bash "$SCRIPT_DIR/deploy.sh"
 echo ""
 
 echo "$(bold '6) What to do in Spotify')"
