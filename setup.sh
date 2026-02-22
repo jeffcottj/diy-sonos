@@ -514,7 +514,7 @@ run_doctor_mode() {
         if timeout 3 bash -c "</dev/tcp/${server_ip}/${server_port}" 2>/dev/null; then
             doctor_report pass "Can connect to snapserver at ${server_ip}:${server_port}."
         else
-            doctor_report fail "Cannot connect to snapserver at ${server_ip}:${server_port}." "Check server reachability/firewall, then run: nc -vz ${server_ip} ${server_port}"
+            doctor_report fail "Cannot connect to snapserver at ${server_ip}:${server_port}." "The client cannot reach the server audio stream endpoint, so synchronized playback cannot start." "nc -vz ${server_ip} ${server_port}"
             failed=1
         fi
 
@@ -525,10 +525,10 @@ run_doctor_mode() {
             if aplay -L 2>/dev/null | grep -Fxq "${RESOLVED_AUDIO_DEVICE}"; then
                 doctor_report pass "Resolved audio device is present in ALSA device list."
             else
-                doctor_report warn "Resolved audio device was not matched exactly in 'aplay -L'." "Inspect devices with: aplay -l && aplay -L"
+                doctor_report warn "Resolved audio device was not matched exactly in 'aplay -L'." "The selected ALSA target may not be the physical output you expect, which can cause silence or playback on the wrong device." "aplay -l && aplay -L"
             fi
         else
-            doctor_report warn "aplay is not available; skipped ALSA device existence check." "Install ALSA utils: sudo apt-get install -y alsa-utils"
+            doctor_report warn "aplay is not available; skipped ALSA device existence check." "Without ALSA utilities, doctor cannot verify that the configured output device exists." "sudo apt-get install -y alsa-utils"
         fi
 
         echo "- Recent error excerpts"

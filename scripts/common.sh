@@ -439,23 +439,41 @@ doctor_mark() {
     esac
 }
 
+doctor_severity() {
+    local status="$1"
+    case "$status" in
+        fail) printf 'must-fix' ;;
+        warn) printf 'optional' ;;
+        *)    printf 'info' ;;
+    esac
+}
+
 doctor_report() {
     local status="$1"
     local message="$2"
-    local remediation="${3:-}"
+    local explanation="${3:-}"
+    local remediation="${4:-}"
 
-    printf '  %s %s\n' "$(doctor_mark "$status")" "$message"
+    printf '  %s [%s] %s\n' "$(doctor_mark "$status")" "$(doctor_severity "$status")" "$message"
+    if [[ -n "$explanation" ]]; then
+        printf '         Why this matters: %s\n' "$explanation"
+    fi
     if [[ -n "$remediation" ]]; then
-        printf '         -> %s\n' "$remediation"
+        printf '         Suggested command: %s\n' "$remediation"
     fi
 }
 
 doctor_check_systemd_service() {
     local service_name="$1"
     local remediation="${2:-sudo systemctl restart ${service_name}}"
+    local install_cmd="sudo ./setup.sh server"
+
+    case "$service_name" in
+        snapclient) install_cmd="sudo ./setup.sh client" ;;
+    esac
 
     if ! systemctl list-unit-files --type=service --all | awk '{print $1}' | grep -qx "${service_name}.service"; then
-        doctor_report fail "${service_name}.service is not installed." "Install and configure with: sudo ./setup.sh server|client (as appropriate)"
+        doctor_report fail "${service_name}.service is not installed." "This service does not exist on the system yet, so audio components that depend on it cannot start." "$install_cmd"
         return 1
     fi
 
@@ -468,14 +486,14 @@ doctor_check_systemd_service() {
     if [[ "$enabled_state" == "enabled" ]]; then
         doctor_report pass "${service_name}.service is enabled."
     else
-        doctor_report fail "${service_name}.service is not enabled (state: ${enabled_state:-unknown})." "sudo systemctl enable ${service_name}"
+        doctor_report fail "${service_name}.service is not enabled (state: ${enabled_state:-unknown})." "Disabled services do not automatically start after reboot, which can leave playback offline." "sudo systemctl enable ${service_name}"
         failed=1
     fi
 
     if [[ "$active_state" == "active" ]]; then
         doctor_report pass "${service_name}.service is active."
     else
-        doctor_report fail "${service_name}.service is not active (state: ${active_state:-unknown})." "$remediation"
+        doctor_report fail "${service_name}.service is not active (state: ${active_state:-unknown})." "The process is currently stopped or crashed, so this audio role is not functioning right now." "$remediation"
         failed=1
     fi
 
@@ -491,7 +509,7 @@ doctor_check_listener() {
         return 0
     fi
 
-    doctor_report fail "TCP port ${port} is not listening (${process_hint})." "sudo ss -ltnp | grep ':${port}' && sudo systemctl restart ${process_hint}"
+    doctor_report fail "TCP port ${port} is not listening (${process_hint})." "Nothing is accepting connections on this required port, so clients/controllers cannot talk to ${process_hint}." "sudo systemctl restart ${process_hint}"
     return 1
 }
 
@@ -501,7 +519,7 @@ doctor_check_fifo() {
         doctor_report pass "FIFO exists: ${fifo_path}"
         return 0
     fi
-    doctor_report fail "FIFO missing or not a named pipe: ${fifo_path}" "sudo rm -f '${fifo_path}' && sudo mkfifo '${fifo_path}'"
+    doctor_report fail "FIFO missing or not a named pipe: ${fifo_path}" "The audio handoff pipe between librespot and snapserver is missing, so server audio cannot flow." "sudo rm -f '${fifo_path}' && sudo mkfifo '${fifo_path}'"
     return 1
 }
 
@@ -511,7 +529,7 @@ doctor_show_recent_errors() {
 
     echo "  Recent errors (${unit}.service):"
     if ! journalctl -u "${unit}.service" -p err -n "$lines" --no-pager 2>/dev/null | sed 's/^/    /'; then
-        doctor_report warn "Unable to read journal for ${unit}.service" "Try with sudo: sudo journalctl -u ${unit}.service -p err -n ${lines} --no-pager"
+        doctor_report warn "Unable to read journal for ${unit}.service" "Logs were not readable in this session, so recent error clues are unavailable." "sudo journalctl -u ${unit}.service -p err -n ${lines} --no-pager"
     fi
 }
 

@@ -52,6 +52,8 @@ This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connect
 
 ## Quick Start
 
+Need help diagnosing setup or runtime issues? See [Troubleshooting](docs/troubleshooting.md).
+
 ### Primary path: one-command guided setup
 
 After install/clone, run:
