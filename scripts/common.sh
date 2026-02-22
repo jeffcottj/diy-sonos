@@ -132,6 +132,70 @@ require_snapcast_version() {
 }
 
 # ---------------------------------------------------------------------------
+# Config validation helpers
+# ---------------------------------------------------------------------------
+
+validate_server_ip() {
+    local value="$1"
+
+    if [[ -z "$value" ]]; then
+        echo "server_ip must not be empty"
+        return 1
+    fi
+
+    if [[ ! "$value" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+        echo "server_ip '$value' must be a valid IPv4 address (example: 192.168.1.100)"
+        return 1
+    fi
+
+    local IFS='.'
+    local octets=($value)
+    local octet
+    for octet in "${octets[@]}"; do
+        if ((octet < 0 || octet > 255)); then
+            echo "server_ip '$value' has out-of-range octet '$octet' (must be 0-255)"
+            return 1
+        fi
+    done
+}
+
+validate_spotify_bitrate() {
+    local value="$1"
+    case "$value" in
+        96|160|320) return 0 ;;
+        *)
+            echo "spotify.bitrate '$value' is invalid; supported values: 96, 160, 320"
+            return 1
+            ;;
+    esac
+}
+
+validate_snapserver_codec() {
+    local value="${1,,}"
+    case "$value" in
+        flac|pcm) return 0 ;;
+        *)
+            echo "snapserver.codec '$1' is invalid; supported values: flac, pcm"
+            return 1
+            ;;
+    esac
+}
+
+validate_snapclient_audio_device() {
+    local value="$1"
+    if [[ "$value" =~ ^(auto|default)$ ]]; then
+        return 0
+    fi
+
+    if [[ "$value" =~ ^(hw|plughw):[0-9]+,[0-9]+$ ]]; then
+        return 0
+    fi
+
+    echo "snapclient.audio_device '$value' must be 'auto', 'default', or an ALSA device like 'hw:1,0'"
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # OS / arch detection
 # ---------------------------------------------------------------------------
 

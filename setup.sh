@@ -9,12 +9,14 @@ usage() {
     cat >&2 <<USAGE
 Usage:
   sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
+  $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 init [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
 
 Modes:
-  init    Guided config generator (interactive by default, supports flags)
-  server  Install/configure server services
-  client  Install/configure client services
+  init       Guided config generator (interactive by default, supports flags)
+  preflight  Run fast validation checks only (no install/configure)
+  server     Run preflight, then install/configure server services
+  client     Run preflight, then install/configure client services
 USAGE
     exit 1
 }
@@ -124,6 +126,182 @@ run_init_mode() {
     fi
 }
 
+check_required_binaries() {
+    local missing=0
+    local bin
+    for bin in apt-get systemctl; do
+        if ! command -v "$bin" >/dev/null 2>&1; then
+            echo "  - Missing required binary: '$bin' (install apt/systemd before running setup)" >&2
+            missing=1
+        fi
+    done
+    return $missing
+}
+
+check_network_reachability() {
+    local domains=(
+        "github.com"
+        "accounts.spotify.com"
+        "deb.debian.org"
+    )
+    local failures=0
+    local domain
+
+    for domain in "${domains[@]}"; do
+        if ! getent ahosts "$domain" >/dev/null 2>&1; then
+            echo "  - Cannot resolve '$domain' via DNS. Check network and DNS settings." >&2
+            failures=1
+            continue
+        fi
+
+        if ! curl -fsSIL --max-time 5 "https://${domain}" >/dev/null 2>&1; then
+            echo "  - Cannot reach https://${domain}. Check internet connectivity/firewall." >&2
+            failures=1
+        fi
+    done
+
+    return $failures
+}
+
+check_os_arch_support() {
+    detect_os_codename
+    detect_arch
+
+    local supported_codenames=(bookworm bullseye)
+    local supported_arches=(arm64 armhf)
+    local codename_ok=1
+    local arch_ok=1
+    local codename
+    local arch
+
+    for codename in "${supported_codenames[@]}"; do
+        if [[ "$OS_CODENAME" == "$codename" ]]; then
+            codename_ok=0
+            break
+        fi
+    done
+
+    for arch in "${supported_arches[@]}"; do
+        if [[ "$ARCH_DEB" == "$arch" ]]; then
+            arch_ok=0
+            break
+        fi
+    done
+
+    if [[ $codename_ok -ne 0 ]]; then
+        echo "  - Unsupported OS codename '$OS_CODENAME'. Supported: ${supported_codenames[*]}." >&2
+    fi
+
+    if [[ $arch_ok -ne 0 ]]; then
+        echo "  - Unsupported architecture '$ARCH_DEB' (uname: $ARCH_UNAME). Supported: ${supported_arches[*]}." >&2
+    fi
+
+    [[ $codename_ok -eq 0 && $arch_ok -eq 0 ]]
+}
+
+check_config_schema_and_values() {
+    local mode="$1"
+    local failures=0
+
+    if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+        echo "  - Missing required config file: $DEFAULT_CONFIG" >&2
+        return 1
+    fi
+
+    parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
+
+    # CLI flags override any config file values
+    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
+
+    if [[ -z "$(cfg server_ip)" ]]; then
+        echo "  - Missing required config key: server_ip" >&2
+        failures=1
+    elif ! validate_server_ip "$(cfg server_ip)"; then
+        failures=1
+    fi
+
+    if [[ -z "$(cfg spotify bitrate)" ]]; then
+        echo "  - Missing required config key: spotify.bitrate" >&2
+        failures=1
+    elif ! validate_spotify_bitrate "$(cfg spotify bitrate)"; then
+        failures=1
+    fi
+
+    if [[ -z "$(cfg snapserver codec)" ]]; then
+        echo "  - Missing required config key: snapserver.codec" >&2
+        failures=1
+    elif ! validate_snapserver_codec "$(cfg snapserver codec)"; then
+        failures=1
+    fi
+
+    if [[ -z "$(cfg snapclient audio_device)" ]]; then
+        echo "  - Missing required config key: snapclient.audio_device" >&2
+        failures=1
+    elif ! validate_snapclient_audio_device "$(cfg snapclient audio_device)"; then
+        failures=1
+    fi
+
+    if [[ "$mode" == "server" || "$mode" == "client" ]]; then
+        if [[ -z "$(cfg spotify device_name)" ]]; then
+            echo "  - Missing required config key: spotify.device_name" >&2
+            failures=1
+        fi
+    fi
+
+    return $failures
+}
+
+run_preflight_mode() {
+    local role="$1"
+    local failed=0
+
+    echo ""
+    echo "=========================================="
+    echo " DIY Sonos — Preflight ($role)"
+    echo "=========================================="
+
+    echo "- Checking required binaries..."
+    if check_required_binaries; then
+        echo "  OK"
+    else
+        failed=1
+    fi
+
+    echo "- Checking network reachability..."
+    if check_network_reachability; then
+        echo "  OK"
+    else
+        failed=1
+    fi
+
+    echo "- Checking OS codename and architecture support..."
+    if check_os_arch_support; then
+        echo "  OK"
+    else
+        failed=1
+    fi
+
+    echo "- Validating config schema and values..."
+    if ! python3 -c "import yaml" 2>/dev/null; then
+        echo "  - python3-yaml is required for config validation. Install with: sudo apt-get install -y python3-yaml" >&2
+        failed=1
+    elif check_config_schema_and_values "$role"; then
+        echo "  OK"
+    else
+        failed=1
+    fi
+
+    if [[ $failed -ne 0 ]]; then
+        echo ""
+        echo "Preflight failed. Fix the issues above, then rerun:"
+        echo "  ./setup.sh preflight $role"
+        return 1
+    fi
+
+    echo ""
+    echo "Preflight passed for '$role'."
+}
+
 MODE="${1:-}"
 [[ -n "$MODE" ]] || usage
 shift
@@ -135,6 +313,15 @@ AUDIO_DEVICE=""
 BITRATE=""
 NORMALISE=""
 INITIAL_VOLUME=""
+
+if [[ "$MODE" == "preflight" ]]; then
+    ROLE="${1:-}"
+    if [[ "$ROLE" != "server" && "$ROLE" != "client" ]]; then
+        echo "Error: preflight mode requires a role: server or client" >&2
+        usage
+    fi
+    shift
+fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -180,7 +367,11 @@ case "$MODE" in
     init)
         run_init_mode
         ;;
+    preflight)
+        run_preflight_mode "$ROLE"
+        ;;
     server|client)
+        run_preflight_mode "$MODE"
         require_root
 
         # Ensure python3-yaml is available for config parsing
