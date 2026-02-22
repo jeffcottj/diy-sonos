@@ -97,6 +97,136 @@ prompt_with_default() {
     fi
 }
 
+prompt_non_empty_with_default() {
+    local prompt_text="$1"
+    local default_val="$2"
+    local value
+    while true; do
+        value="$(prompt_with_default "$prompt_text" "$default_val")"
+        if [[ -n "$value" ]]; then
+            echo "$value"
+            return 0
+        fi
+        echo "  Value is required. Please enter a non-empty value."
+    done
+}
+
+prompt_ipv4_with_default() {
+    local prompt_text="$1"
+    local default_val="$2"
+    local value
+    while true; do
+        value="$(prompt_with_default "$prompt_text" "$default_val")"
+        if validate_ipv4 "$value"; then
+            echo "$value"
+            return 0
+        fi
+        echo "  Invalid IP address. Please enter a valid IPv4 address (e.g. 192.168.1.100)."
+    done
+}
+
+choose_profile_preset() {
+    local default_choice="1"
+    echo "Choose tuning preset:"
+    echo "  1) Basic home setup (recommended)"
+    echo "  2) Advanced tuning"
+    while true; do
+        local choice
+        read -r -p "Preset [${default_choice}]: " choice
+        choice="${choice:-$default_choice}"
+        case "$choice" in
+            1)
+                echo "basic"
+                return 0
+                ;;
+            2)
+                echo "advanced"
+                return 0
+                ;;
+            *)
+                echo "  Please enter 1 or 2."
+                ;;
+        esac
+    done
+}
+
+collect_client_ips() {
+    local -n _existing_ref=$1
+    local -a collected=()
+    local first_entry=1
+
+    echo ""
+    echo "Enter client device IPs one at a time. Press Enter with no input when done."
+    if [[ ${#_existing_ref[@]} -gt 0 ]]; then
+        echo "(Existing clients: ${_existing_ref[*]})"
+        echo "Leave blank and press Enter to keep existing list, or enter IPs to replace it."
+    fi
+
+    while true; do
+        local ip
+        read -r -p "  Client IP: " ip
+
+        if [[ -z "$ip" ]]; then
+            if [[ ${#collected[@]} -eq 0 && ${#_existing_ref[@]} -gt 0 && $first_entry -eq 1 ]]; then
+                collected=("${_existing_ref[@]}")
+                break
+            elif [[ ${#collected[@]} -eq 0 ]]; then
+                echo "  At least one client IP is required."
+                continue
+            else
+                break
+            fi
+        fi
+        first_entry=0
+
+        if ! validate_ipv4 "$ip"; then
+            echo "  Invalid IP address. Please enter a valid IPv4 address."
+            continue
+        fi
+
+        local existing
+        for existing in "${collected[@]}"; do
+            if [[ "$existing" == "$ip" ]]; then
+                echo "  Duplicate client IP: $ip (already added)."
+                continue 2
+            fi
+        done
+
+        collected+=("$ip")
+    done
+
+    printf '%s\n' "${collected[@]}"
+}
+
+print_summary_conflicts() {
+    local server_ip="$1"
+    shift
+    local client_ips=("$@")
+    local has_conflict=0
+
+    if [[ ${#client_ips[@]} -eq 0 ]]; then
+        echo "  - Conflict: client IP list is empty."
+        has_conflict=1
+    fi
+
+    declare -A seen=()
+    local ip
+    for ip in "${client_ips[@]}"; do
+        if [[ -n "${seen[$ip]:-}" ]]; then
+            echo "  - Conflict: duplicate client IP detected: $ip"
+            has_conflict=1
+        fi
+        seen[$ip]=1
+    done
+
+    if [[ -n "${seen[$server_ip]:-}" ]]; then
+        echo "  - Conflict: server IP ($server_ip) is also listed as a client IP."
+        has_conflict=1
+    fi
+
+    return $has_conflict
+}
+
 # ---------------------------------------------------------------------------
 # write_config_yml
 # ---------------------------------------------------------------------------
@@ -104,8 +234,24 @@ write_config_yml() {
     local device_name="$1"
     local server_ip="$2"
     local ssh_user="$3"
-    shift 3
+    local profile_preset="$4"
+    shift 4
     local client_ips=("$@")
+
+    local bitrate="160"
+    local normalise="true"
+    local initial_volume="70"
+    local codec="flac"
+    local buffer_ms="1200"
+    local latency_ms="0"
+
+    if [[ "$profile_preset" == "advanced" ]]; then
+        bitrate="320"
+        initial_volume="75"
+        codec="pcm"
+        buffer_ms="800"
+        latency_ms="-20"
+    fi
 
     # Build clients YAML block
     local clients_yaml=""
@@ -123,25 +269,27 @@ ${clients_yaml}
 # ── Spotify ───────────────────────────────────────────────────────────────
 spotify:
   device_name: "${device_name}"   # Name shown in Spotify app
-  bitrate: 320                    # 96 | 160 | 320 kbps
-  normalise: true                 # Volume normalisation
-  initial_volume: 75              # 0-100
+  bitrate: ${bitrate}                    # 96 | 160 | 320 kbps
+  normalise: ${normalise}                 # Volume normalisation
+  initial_volume: ${initial_volume}              # 0-100
   cache_dir: "/var/cache/librespot"  # OAuth credential cache
   oauth_callback_port: 4000       # Local callback port used during OAuth
   device_type: "speaker"          # Icon shown in Spotify app
 
 # ── Advanced ──────────────────────────────────────────────────────────────
+profile_preset: "${profile_preset}"   # basic | advanced
+
 snapserver:
   fifo_path: "/tmp/snapfifo"
   sampleformat: "44100:16:2"      # Must match librespot output
-  codec: "flac"                   # flac | pcm
-  buffer_ms: 1000                 # End-to-end latency target
+  codec: "${codec}"                   # flac | pcm
+  buffer_ms: ${buffer_ms}                 # End-to-end latency target
   port: 1704
   control_port: 1780
 
 snapclient:
   audio_device: "auto"            # "auto" = detect first USB audio card; or "hw:1,0" etc.
-  latency_ms: 0                   # Per-client latency trim
+  latency_ms: ${latency_ms}                   # Per-client latency trim
   instance: 1
 YAML
 }
@@ -200,63 +348,71 @@ run_wizard() {
 
     # Device name
     local device_name
-    device_name="$(prompt_with_default "Speaker system name (shown in Spotify)" "${EXISTING_DEVICE_NAME:-DIY Sonos}")"
+    device_name="$(prompt_non_empty_with_default "Speaker system name (shown in Spotify)" "${EXISTING_DEVICE_NAME:-DIY Sonos}")"
+
+    # Profile preset
+    local profile_preset
+    profile_preset="$(choose_profile_preset)"
 
     # Server IP
     local server_ip=""
-    while true; do
-        server_ip="$(prompt_with_default "Server device IP" "${EXISTING_SERVER_IP:-}")"
-        if validate_ipv4 "$server_ip"; then
-            break
-        fi
-        echo "  Invalid IP address. Please enter a valid IPv4 address (e.g. 192.168.1.100)."
-    done
+    server_ip="$(prompt_ipv4_with_default "Server device IP" "${EXISTING_SERVER_IP:-}")"
 
     # SSH user
     local ssh_user
-    ssh_user="$(prompt_with_default "SSH username on each device" "${EXISTING_SSH_USER:-pi}")"
+    ssh_user="$(prompt_non_empty_with_default "SSH username on each device" "${EXISTING_SSH_USER:-pi}")"
 
     # Client IPs
-    echo ""
-    echo "Enter client device IPs one at a time. Press Enter with no input when done."
-    if [[ ${#EXISTING_CLIENT_IPS[@]} -gt 0 ]]; then
-        echo "(Existing clients: ${EXISTING_CLIENT_IPS[*]})"
-        echo "Leave blank and press Enter to keep existing list, or enter IPs to replace it."
-    fi
-
     local client_ips=()
-    local first_entry=1
+    mapfile -t client_ips < <(collect_client_ips EXISTING_CLIENT_IPS)
+
     while true; do
-        local ip
-        read -r -p "  Client IP: " ip
-        if [[ -z "$ip" ]]; then
-            if [[ ${#client_ips[@]} -eq 0 && ${#EXISTING_CLIENT_IPS[@]} -gt 0 && $first_entry -eq 1 ]]; then
-                # Keep existing list
-                client_ips=("${EXISTING_CLIENT_IPS[@]}")
-                break
-            elif [[ ${#client_ips[@]} -eq 0 ]]; then
-                echo "  At least one client IP is required."
-                continue
-            else
-                break
-            fi
-        fi
-        first_entry=0
-        if validate_ipv4 "$ip"; then
-            client_ips+=("$ip")
+        echo ""
+        echo "Configuration summary:"
+        echo "  System name : $device_name"
+        echo "  Preset      : $profile_preset"
+        echo "  Server IP   : $server_ip"
+        echo "  SSH user    : $ssh_user"
+        echo "  Clients     : ${client_ips[*]}"
+        echo ""
+        echo "Conflict checks:"
+        if print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
+            echo "  No conflicts detected."
         else
-            echo "  Invalid IP address. Please enter a valid IPv4 address."
+            echo ""
+            echo "Please resolve the conflicts before writing config.yml."
+        fi
+
+        echo ""
+        echo "Review/edit options:"
+        echo "  1) Device name"
+        echo "  2) Preset"
+        echo "  3) Server IP"
+        echo "  4) SSH user"
+        echo "  5) Client IPs"
+        echo "  6) Continue"
+        local edit_choice
+        read -r -p "Select option [6]: " edit_choice
+        edit_choice="${edit_choice:-6}"
+
+        case "$edit_choice" in
+            1) device_name="$(prompt_non_empty_with_default "Speaker system name (shown in Spotify)" "$device_name")" ;;
+            2) profile_preset="$(choose_profile_preset)" ;;
+            3) server_ip="$(prompt_ipv4_with_default "Server device IP" "$server_ip")" ;;
+            4) ssh_user="$(prompt_non_empty_with_default "SSH username on each device" "$ssh_user")" ;;
+            5) mapfile -t client_ips < <(collect_client_ips client_ips) ;;
+            6)
+                if print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
+                    break
+                fi
+                ;;
+            *) echo "  Invalid option. Please choose 1-6." ;;
+        esac
+
+        if [[ "$edit_choice" == "6" ]] && ! print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
+            echo "Cannot continue until conflicts are resolved."
         fi
     done
-
-    # Summary
-    echo ""
-    echo "Configuration summary:"
-    echo "  System name : $device_name"
-    echo "  Server IP   : $server_ip"
-    echo "  SSH user    : $ssh_user"
-    echo "  Clients     : ${client_ips[*]}"
-    echo ""
 
     local confirm
     read -r -p "Write config.yml? [Y/n]: " confirm
@@ -266,14 +422,30 @@ run_wizard() {
         exit 0
     fi
 
-    write_config_yml "$device_name" "$server_ip" "$ssh_user" "${client_ips[@]}"
+    write_config_yml "$device_name" "$server_ip" "$ssh_user" "$profile_preset" "${client_ips[@]}"
 
     echo ""
     echo "$(green "✓") config.yml written."
     echo ""
+    echo "Running advisory preflight validation (no install changes)..."
+
+    if ./setup.sh preflight server --advisory; then
+        echo "  Server preflight advisory: OK"
+    else
+        echo "  Server preflight advisory: reported issues"
+    fi
+
+    if ./setup.sh preflight client --advisory; then
+        echo "  Client preflight advisory: OK"
+    else
+        echo "  Client preflight advisory: reported issues"
+    fi
+
+    echo ""
     echo "Next steps:"
-    echo "  1. Set up SSH keys:  ./configure.sh --copy-keys"
-    echo "  2. Deploy:           ./deploy.sh"
+    echo "  1. Review any advisory preflight warnings above."
+    echo "  2. Set up SSH keys:  ./configure.sh --copy-keys"
+    echo "  3. Deploy:           ./deploy.sh"
     echo ""
 }
 

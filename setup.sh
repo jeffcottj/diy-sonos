@@ -10,7 +10,7 @@ usage() {
 Usage:
   sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   sudo $0 upgrade [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
-  $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
+  $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--advisory]
   $0 init [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   sudo $0 doctor server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 version
@@ -332,6 +332,7 @@ check_config_schema_and_values() {
 
 run_preflight_mode() {
     local role="$1"
+    local advisory="${2:-0}"
     local failed=0
 
     echo ""
@@ -372,6 +373,12 @@ run_preflight_mode() {
 
     if [[ $failed -ne 0 ]]; then
         echo ""
+        if [[ "$advisory" == "1" ]]; then
+            echo "Preflight found issues in advisory mode; no changes were made."
+            echo "Address the warnings when possible, then rerun:"
+            echo "  ./setup.sh preflight $role"
+            return 0
+        fi
         echo "Preflight failed. Fix the issues above, then rerun:"
         echo "  ./setup.sh preflight $role"
         return 1
@@ -469,6 +476,7 @@ shift
 
 ROLE=""
 SERVER_IP=""
+ADVISORY=0
 DEVICE_NAME=""
 AUDIO_DEVICE=""
 BITRATE=""
@@ -514,6 +522,10 @@ while [[ $# -gt 0 ]]; do
             INITIAL_VOLUME="$2"
             shift 2
             ;;
+        --advisory)
+            ADVISORY=1
+            shift
+            ;;
         *)
             echo "Unknown argument: $1" >&2
             usage
@@ -529,7 +541,7 @@ case "$MODE" in
         run_init_mode
         ;;
     preflight)
-        run_preflight_mode "$ROLE"
+        run_preflight_mode "$ROLE" "$ADVISORY"
         ;;
     doctor)
         run_doctor_mode "$ROLE"
