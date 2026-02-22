@@ -70,6 +70,26 @@ This guided script walks you through the complete first-time flow:
 
 ### Manual path (step-by-step)
 
+### Fastest path (recommended for first install)
+
+Use the beginner preset to generate `.diy-sonos.generated.yml` with only the essentials:
+
+- server IP
+- one or more client IPs
+- optional speaker name
+
+All advanced audio values are auto-filled (bitrate, codec, buffer, audio auto-detect).
+
+```bash
+./setup.sh init --preset basic
+```
+
+Non-interactive example:
+
+```bash
+./setup.sh init --preset basic --server-ip 192.168.1.100 --client-ips 192.168.1.121,192.168.1.122 --device-name "Living Room"
+```
+
 ### 1. Install from release (recommended)
 
 ```bash
