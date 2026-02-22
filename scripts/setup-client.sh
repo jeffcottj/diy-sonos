@@ -14,7 +14,7 @@ set_client_output_volume_max() {
     fi
 
     local mixer
-    mixer="$(amixer -D "$RESOLVED_AUDIO_DEVICE" scontrols 2>/dev/null | awk -F"'" 'NR==1{print $2}')"
+    mixer="$(amixer -D "$RESOLVED_AUDIO_DEVICE" scontrols 2>/dev/null | awk -F"'" 'NR==1{print $2}' || true)"
 
     if [[ -n "$mixer" ]]; then
         if amixer -D "$RESOLVED_AUDIO_DEVICE" sset "$mixer" 100% unmute >/dev/null 2>&1; then
