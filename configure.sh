@@ -14,6 +14,104 @@ _fmt() { printf "\033[%sm%s\033[0m" "$1" "$2"; }
 green()  { _fmt "32" "$*"; }
 yellow() { _fmt "33" "$*"; }
 bold()   { _fmt "1"  "$*"; }
+red()    { _fmt "31" "$*"; }
+
+SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
+KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
+
+ensure_local_ssh_key() {
+    if [[ -f "$SSH_KEY_PATH" ]]; then
+        return 0
+    fi
+
+    echo "$(yellow "Local SSH key not found at $SSH_KEY_PATH")"
+    read -r -p "Generate a new ed25519 key now? [Y/n]: " generate_choice
+    generate_choice="${generate_choice:-Y}"
+
+    if [[ "$generate_choice" =~ ^[Yy]$ ]]; then
+        mkdir -p "$HOME/.ssh"
+        chmod 700 "$HOME/.ssh"
+        ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" >/dev/null
+        echo "$(green "Generated SSH key: $SSH_KEY_PATH")"
+        return 0
+    fi
+
+    echo "Please generate a key first: ssh-keygen -t ed25519 -f $SSH_KEY_PATH"
+    return 1
+}
+
+classify_ssh_error() {
+    local stderr_text="$1"
+
+    if [[ "$stderr_text" == *"Permission denied"* ]]; then
+        echo "auth_failed"
+    elif [[ "$stderr_text" == *"No route to host"* ]] || [[ "$stderr_text" == *"Connection timed out"* ]] || [[ "$stderr_text" == *"Connection refused"* ]] || [[ "$stderr_text" == *"Could not resolve hostname"* ]]; then
+        echo "host_unreachable"
+    elif [[ "$stderr_text" == *"Host key verification failed"* ]] || [[ "$stderr_text" == *"REMOTE HOST IDENTIFICATION HAS CHANGED"* ]]; then
+        echo "host_key_issue"
+    else
+        echo "unknown"
+    fi
+}
+
+print_ssh_fix_hint() {
+    local host="$1"
+    local ssh_user="$2"
+    local reason="$3"
+
+    case "$reason" in
+        auth_failed)
+            echo "    Fix: verify credentials and push key manually:"
+            echo "         ssh-copy-id ${ssh_user}@${host}"
+            ;;
+        host_unreachable)
+            echo "    Fix: verify host is online and SSH is enabled:"
+            echo "         ping -c 1 ${host}"
+            echo "         ssh ${ssh_user}@${host}"
+            ;;
+        host_key_issue)
+            echo "    Fix: remove stale host key and retry:"
+            echo "         ssh-keygen -R ${host}"
+            echo "         ssh-keyscan -H ${host} >> ~/.ssh/known_hosts"
+            ;;
+        *)
+            echo "    Fix: run verbose SSH check: ssh -vv ${ssh_user}@${host}"
+            ;;
+    esac
+}
+
+ensure_host_key_trusted() {
+    local host="$1"
+
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    touch "$KNOWN_HOSTS_FILE"
+    chmod 600 "$KNOWN_HOSTS_FILE"
+
+    if ssh-keygen -F "$host" -f "$KNOWN_HOSTS_FILE" >/dev/null; then
+        return 0
+    fi
+
+    local scan_out
+    if ! scan_out="$(ssh-keyscan -T 5 -H "$host" 2>/dev/null)" || [[ -z "$scan_out" ]]; then
+        echo "$(red "Could not fetch SSH host key for $host via ssh-keyscan")"
+        return 1
+    fi
+
+    local fingerprint
+    fingerprint="$(printf '%s\n' "$scan_out" | ssh-keygen -lf - 2>/dev/null | awk 'NR==1{print $2}')"
+
+    echo "Host $host is new."
+    echo "  Fingerprint: ${fingerprint:-unknown}"
+    read -r -p "Trust this host key and add to known_hosts? [y/N]: " trust_choice
+    if [[ ! "$trust_choice" =~ ^[Yy]$ ]]; then
+        echo "Skipped host $host (untrusted host key)."
+        return 1
+    fi
+
+    printf '%s\n' "$scan_out" >> "$KNOWN_HOSTS_FILE"
+    echo "Added host key for $host to $KNOWN_HOSTS_FILE"
+}
 
 # ---------------------------------------------------------------------------
 # IP validation
@@ -313,20 +411,35 @@ run_copy_keys() {
     [[ -n "$server_ip" ]] && all_ips+=("$server_ip")
     all_ips+=("${client_ips[@]+"${client_ips[@]}"}")
 
+    ensure_local_ssh_key
+
     echo "$(bold "Setting up SSH keys for all devices...")"
     echo "SSH user: $ssh_user"
     echo ""
 
     local ok=0 fail=0
     for ip in "${all_ips[@]}"; do
+        if ! ensure_host_key_trusted "$ip"; then
+            (( fail++ )) || true
+            continue
+        fi
+
         printf "  ssh-copy-id %s@%s ... " "$ssh_user" "$ip"
-        if ssh-copy-id -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${ssh_user}@${ip}" 2>/dev/null; then
+        local err_file
+        err_file="$(mktemp)"
+        if ssh-copy-id -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "${ssh_user}@${ip}" 2>"$err_file"; then
             echo "$(green "ok")"
             (( ok++ )) || true
         else
-            echo "$(yellow "warning: failed (key may already be present or host unreachable)")"
+            echo "$(red "FAILED")"
+            local err_text reason
+            err_text="$(<"$err_file")"
+            reason="$(classify_ssh_error "$err_text")"
+            echo "    Reason: $reason"
+            print_ssh_fix_hint "$ip" "$ssh_user" "$reason"
             (( fail++ )) || true
         fi
+        rm -f "$err_file"
     done
 
     echo ""
@@ -334,6 +447,64 @@ run_copy_keys() {
     if (( fail > 0 )); then
         echo "Warnings are non-fatal — the key may already be in authorized_keys."
     fi
+}
+
+run_diagnose_ssh() {
+    read_existing_config
+
+    local ssh_user="${EXISTING_SSH_USER:-pi}"
+    local server_ip="${EXISTING_SERVER_IP:-}"
+    local client_ips=("${EXISTING_CLIENT_IPS[@]+"${EXISTING_CLIENT_IPS[@]}"}")
+
+    if [[ -z "$server_ip" && ${#client_ips[@]} -eq 0 ]]; then
+        echo "No IPs found in config.yml. Run ./configure.sh first." >&2
+        exit 1
+    fi
+
+    local all_ips=()
+    [[ -n "$server_ip" ]] && all_ips+=("$server_ip")
+    all_ips+=("${client_ips[@]+"${client_ips[@]}"}")
+
+    ensure_local_ssh_key || true
+
+    echo "$(bold "SSH diagnostics")"
+    echo "User: $ssh_user"
+    echo ""
+
+    local failures=0
+    for ip in "${all_ips[@]}"; do
+        echo "$(bold "Host: $ip")"
+
+        if ! ensure_host_key_trusted "$ip"; then
+            echo "  $(red "Host key check failed")"
+            echo "  Fix: ssh-keyscan -H $ip >> ~/.ssh/known_hosts"
+            (( failures++ )) || true
+            echo ""
+            continue
+        fi
+
+        local err_file
+        err_file="$(mktemp)"
+        if ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 "${ssh_user}@${ip}" true 2>"$err_file"; then
+            echo "  $(green "SSH ok")"
+        else
+            local err_text reason
+            err_text="$(<"$err_file")"
+            reason="$(classify_ssh_error "$err_text")"
+            echo "  $(red "SSH failed") — $reason"
+            print_ssh_fix_hint "$ip" "$ssh_user" "$reason"
+            (( failures++ )) || true
+        fi
+        rm -f "$err_file"
+        echo ""
+    done
+
+    if (( failures > 0 )); then
+        echo "$(yellow "Diagnostics complete with $failures host(s) requiring fixes.")"
+        exit 1
+    fi
+
+    echo "$(green "All hosts passed SSH diagnostics.")"
 }
 
 # ---------------------------------------------------------------------------
@@ -456,11 +627,15 @@ case "${1:-}" in
     --copy-keys)
         run_copy_keys
         ;;
+    --diagnose-ssh)
+        run_diagnose_ssh
+        ;;
     --help|-h)
         cat <<USAGE
 Usage:
   ./configure.sh              Interactive wizard — writes config.yml
   ./configure.sh --copy-keys  Copy SSH keys to all target devices in config.yml
+  ./configure.sh --diagnose-ssh Diagnose SSH connectivity to all configured devices
   ./configure.sh --help       Show this help
 USAGE
         ;;
