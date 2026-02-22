@@ -90,6 +90,27 @@ See [First-Run Spotify Authentication](#first-run-spotify-authentication) below.
 sudo ./setup.sh client
 ```
 
+### 6. Bootstrap many clients remotely (optional)
+
+Use the orchestrator script from your admin machine to copy this repo to each Pi and run `sudo ./setup.sh client` remotely:
+
+```bash
+./scripts/bootstrap-clients.sh --hosts 192.168.1.121,192.168.1.122 --inventory clients.yml
+```
+
+You can also pass a newline-delimited host file:
+
+```bash
+./scripts/bootstrap-clients.sh --hosts-file hosts.txt --inventory clients.yml
+```
+
+The script reads per-client overrides from `clients.yml`:
+- `name` → Spotify device name
+- `latency` → `snapclient.latency_ms`
+- `audio_device` → `snapclient.audio_device`
+
+Host selection comes from `--hosts` / `--hosts-file`; `clients.yml` supplies optional overrides by matching `clients[].host`.
+
 Open Spotify, select your device, and music plays on all speakers in sync.
 
 ### Advanced: manual YAML editing
@@ -247,3 +268,18 @@ sudo ./setup.sh client   # re-renders client service and restarts
 ```
 
 Packages are only installed if not already present. Services are restarted only after configuration is updated.
+
+`scripts/bootstrap-clients.sh` is also designed for idempotent reruns: it re-syncs the repo, regenerates `.diy-sonos.generated.yml`, reapplies latency overrides from inventory, and re-runs `sudo ./setup.sh client` on each target host.
+
+---
+
+## Secure SSH Prerequisites for Remote Bootstrap
+
+Before using `scripts/bootstrap-clients.sh`, ensure:
+
+- SSH key-based authentication is configured for each client (`ssh-copy-id` or equivalent).
+- Host keys are verified and present in `~/.ssh/known_hosts` (do a manual SSH once per host).
+- The remote user can run `sudo ./setup.sh client` non-interactively when automating. Use `--sudo-passless-check` to fail fast if passwordless sudo is unavailable.
+- You trust the management machine running the script, since it handles your SSH key and can execute privileged commands remotely.
+
+The script uses OpenSSH BatchMode (`-o BatchMode=yes`) so it will fail instead of prompting for passwords.
