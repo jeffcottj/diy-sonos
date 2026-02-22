@@ -56,6 +56,7 @@ echo "Audio device: $RESOLVED_AUDIO_DEVICE"
 echo ""
 echo "--- Rendering systemd service unit ---"
 
+snapshot_file /etc/systemd/system/snapclient.service
 render_template \
     "$SCRIPT_DIR/templates/snapclient.service.tmpl" \
     "/etc/systemd/system/snapclient.service"

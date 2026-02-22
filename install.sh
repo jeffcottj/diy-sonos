@@ -6,6 +6,7 @@ INSTALL_DIR_DEFAULT="${HOME}/diy-sonos"
 TAG="${DIY_SONOS_TAG:-latest}"
 INSTALL_DIR="$INSTALL_DIR_DEFAULT"
 SKIP_SETUP=0
+BACKUP_DIR=""
 
 usage() {
   cat <<USAGE
@@ -13,13 +14,14 @@ DIY Sonos release installer
 
 Usage:
   curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<tag>/install.sh | bash
-  ./install.sh [--tag vX.Y.Z|latest] [--install-dir DIR] [--repo owner/repo] [--skip-setup]
+  ./install.sh [--tag vX.Y.Z|latest] [--install-dir DIR] [--repo owner/repo] [--skip-setup] [--backup-dir DIR]
 
 Options:
   --tag          Release tag to install (default: latest)
   --install-dir  Destination directory (default: ~/diy-sonos)
   --repo         GitHub repository slug (default: jeffcottj/diy-sonos)
   --skip-setup   Download/extract only; do not run guided setup prompt
+  --backup-dir   Optional persistent backup directory for config snapshots
 USAGE
 }
 
@@ -29,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --install-dir) INSTALL_DIR="$2"; shift 2 ;;
     --repo) REPO_SLUG="$2"; shift 2 ;;
     --skip-setup) SKIP_SETUP=1; shift ;;
+    --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -64,9 +67,23 @@ ROOT_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n1)"
 
 mkdir -p "$INSTALL_DIR"
 
+BACKUP_STAMP=""
+if [[ -n "$BACKUP_DIR" ]]; then
+  BACKUP_STAMP="$(date +%Y%m%d-%H%M%S)"
+  mkdir -p "$BACKUP_DIR/$BACKUP_STAMP"
+  echo "Persistent config snapshots enabled: $BACKUP_DIR/$BACKUP_STAMP"
+fi
+
+echo "Preserving existing local config files (if present)..."
 for file in config.yml .diy-sonos.generated.yml clients.yml; do
   if [[ -f "$INSTALL_DIR/$file" ]]; then
     cp "$INSTALL_DIR/$file" "$TMP_DIR/$file.backup"
+    echo "  Backed up: $INSTALL_DIR/$file"
+    if [[ -n "$BACKUP_STAMP" ]]; then
+      cp "$INSTALL_DIR/$file" "$BACKUP_DIR/$BACKUP_STAMP/$file"
+      echo "    Snapshot: $BACKUP_DIR/$BACKUP_STAMP/$file"
+      echo "    Restore: cp '$BACKUP_DIR/$BACKUP_STAMP/$file' '$INSTALL_DIR/$file'"
+    fi
   fi
 done
 
@@ -79,6 +96,7 @@ echo "$TAG" > "$INSTALL_DIR/.diy-sonos-version"
 for file in config.yml .diy-sonos.generated.yml clients.yml; do
   if [[ -f "$TMP_DIR/$file.backup" ]]; then
     cp "$TMP_DIR/$file.backup" "$INSTALL_DIR/$file"
+    echo "  Restored preserved config: $INSTALL_DIR/$file"
   fi
 done
 
@@ -87,6 +105,7 @@ chmod +x "$INSTALL_DIR/setup.sh" "$INSTALL_DIR/install.sh"
 echo ""
 echo "Installed DIY Sonos ${TAG} to ${INSTALL_DIR}"
 echo "Version metadata stored at ${INSTALL_DIR}/.diy-sonos-version"
+echo "Re-running install.sh is retry-safe: release files are replaced and local config files are preserved."
 
 echo ""
 echo "Next:"
