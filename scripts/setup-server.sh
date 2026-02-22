@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
 
 echo ""
 echo "=========================================="
@@ -25,6 +26,9 @@ echo ""
 echo "--- Installing base dependencies ---"
 apt_update_if_stale
 pkg_install wget curl ca-certificates alsa-utils avahi-daemon
+
+# Cleanup/mask legacy units and binaries before installing fresh units.
+cleanup_legacy_for_role server
 
 # ---------------------------------------------------------------------------
 # 3. Install librespot via raspotify apt repo
@@ -81,7 +85,7 @@ else
     echo "raspotify already at target version"
 fi
 
-# Mask raspotify's own service — we manage librespot with our own unit
+# Keep raspotify masked — we manage librespot with our own unit
 systemctl mask raspotify.service 2>/dev/null || true
 systemctl stop raspotify.service 2>/dev/null || true
 
