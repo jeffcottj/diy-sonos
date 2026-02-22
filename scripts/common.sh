@@ -279,13 +279,20 @@ install_deb() {
     local pkg_ver
     pkg_ver="$(echo "$filename" | cut -d_ -f2)"
 
+    local installed_ver=""
     if dpkg -s "$pkg_name" &>/dev/null; then
-        local installed_ver
-        installed_ver="$(dpkg -s "$pkg_name" | grep '^Version:' | awk '{print $2}')"
-        if [[ "$installed_ver" == *"$pkg_ver"* ]]; then
-            echo "$pkg_name $pkg_ver already installed, skipping"
+        installed_ver="$(dpkg -s "$pkg_name" | awk '/^Version:/ {print $2}')"
+    fi
+
+    echo "install_deb: pkg_name=$pkg_name installed_ver=${installed_ver:-<not-installed>} pkg_ver=$pkg_ver"
+    if [[ -n "$installed_ver" ]]; then
+        if [[ "$installed_ver" == "$pkg_ver" ]]; then
+            echo "install_deb: decision=skip (installed version matches repo package exactly)"
             return 0
         fi
+        echo "install_deb: decision=install (installed version differs from repo package)"
+    else
+        echo "install_deb: decision=install (package not currently installed)"
     fi
 
     echo "Downloading $filename..."
