@@ -1,0 +1,17 @@
+defaults:
+  server_ip: 192.168.1.100
+  ssh_user: pi
+  ssh_port: 22
+  ssh_key: ~/.ssh/id_ed25519
+  remote_dir: ~/diy-sonos
+
+clients:
+  - host: 192.168.1.121
+    name: Kitchen
+    latency: 10
+    audio_device: hw:1,0
+
+  - host: 192.168.1.122
+    name: Office
+    latency: 0
+    audio_device: auto
