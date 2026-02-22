@@ -45,15 +45,24 @@ git clone https://github.com/yourusername/diy-sonos.git
 cd diy-sonos
 ```
 
-### 2. Edit config.yml
+### 2. Run the guided setup config wizard (recommended)
 
 ```bash
-nano config.yml
+./setup.sh init
 ```
 
-Set `server_ip` to the Pi 5's IP address. Adjust `spotify.device_name` if desired.
+The wizard asks for role (`server`/`client`), server IP, Spotify device name, and audio options, then writes `.diy-sonos.generated.yml`.
 
-Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `SNAPCAST_VER_DEFAULT`. Update that value, then re-run setup on server and clients.
+You can also script this step non-interactively:
+
+```bash
+./setup.sh init --role client --server-ip 192.168.1.100 --device-name "Kitchen" --audio-device hw:1,0
+```
+
+Config precedence is:
+1. CLI flags (`--server-ip`, `--device-name`, `--audio-device`)
+2. `.diy-sonos.generated.yml`
+3. `config.yml` (repo defaults)
 
 ### 3. Set up the server (Pi 5)
 
@@ -72,6 +81,12 @@ sudo ./setup.sh client
 ```
 
 Open Spotify, select your device, and music plays on all speakers in sync.
+
+### Advanced: manual YAML editing
+
+If you prefer to hand-edit config, update `config.yml` and/or `.diy-sonos.generated.yml` directly.
+
+Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `SNAPCAST_VER_DEFAULT`. Update that value, then re-run setup on server and clients.
 
 ---
 
