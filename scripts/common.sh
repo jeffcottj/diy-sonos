@@ -512,6 +512,7 @@ PYEOF
 systemd_enable_restart() {
     local svc="$1"
     systemctl daemon-reload
+    systemctl unmask "$svc" 2>/dev/null || true
     systemctl enable "$svc"
     if systemctl is-active --quiet "$svc"; then
         systemctl restart "$svc"

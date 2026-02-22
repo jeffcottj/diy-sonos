@@ -210,12 +210,28 @@ parse_spotify_auth_settings
 echo "$(bold '6) Spotify authentication check')"
 echo "  Verifying server auth cache status..."
 
+_auth_ok=0
 if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${SERVER_SSH_USER}@${SERVER_IP}" \
     "sudo librespot-auth-helper verify-auth-cache ${SPOTIFY_CACHE_DIR}" >/dev/null 2>&1; then
+    _auth_ok=1
+fi
+
+_librespot_active=0
+if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${SERVER_SSH_USER}@${SERVER_IP}" \
+    "systemctl is-active --quiet librespot" 2>/dev/null; then
+    _librespot_active=1
+fi
+
+if [[ $_auth_ok -eq 1 && $_librespot_active -eq 1 ]]; then
     echo "  $(green 'Spotify auth cache detected.')"
     echo "  Open Spotify and select your configured speaker device to start playback."
     echo ""
     echo "$(green 'Done: deployment complete and Spotify-ready.')"
+elif [[ $_auth_ok -eq 1 && $_librespot_active -eq 0 ]]; then
+    echo "  $(yellow 'Auth cache OK but librespot is not running on the server.')"
+    echo "  Re-run deployment to recover: ./deploy.sh"
+    echo ""
+    echo "$(yellow 'Done: deployment complete (librespot needs restart).')"
 else
     echo "  $(yellow 'Spotify auth cache is still pending.')"
     echo "  Deployment is complete, but Spotify playback is blocked until auth finishes."

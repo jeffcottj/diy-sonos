@@ -225,6 +225,7 @@ if [[ $_config_changed -eq 1 ]]; then
     systemd_enable_restart snapserver
 else
     echo "Config unchanged — skipping service restarts"
+    systemctl unmask librespot snapserver 2>/dev/null || true
     systemctl enable librespot snapserver 2>/dev/null || true
     systemctl is-active --quiet librespot || systemctl start librespot
     check_librespot_health

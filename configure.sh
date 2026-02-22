@@ -392,6 +392,15 @@ write_config_yml() {
         clients_yaml+="    ssh_user: \"${client_user}\""$'\n'
     done
 
+    # Detect combo mode: server IP is also a client
+    local profile_role_section=""
+    for ip in "${client_ips[@]}"; do
+        if [[ "$ip" == "$server_ip" ]]; then
+            profile_role_section=$'profile:\n  role: server+client'
+            break
+        fi
+    done
+
     cat > "$CONFIG_FILE" <<YAML
 # ── Network ──────────────────────────────────────────────────────────────
 ssh_user: "${ssh_user}"           # SSH username used by deploy.sh
@@ -414,6 +423,7 @@ spotify:
 
 # ── Advanced ──────────────────────────────────────────────────────────────
 profile_preset: "${profile_preset}"   # basic | advanced
+${profile_role_section}
 
 snapserver:
   fifo_path: "/tmp/snapfifo"

@@ -104,6 +104,7 @@ if [[ $_config_changed -eq 1 ]]; then
     systemd_enable_restart snapclient
 else
     echo "Config unchanged — skipping service restart"
+    systemctl unmask snapclient 2>/dev/null || true
     systemctl enable snapclient 2>/dev/null || true
     systemctl is-active --quiet snapclient || systemctl start snapclient
 fi
