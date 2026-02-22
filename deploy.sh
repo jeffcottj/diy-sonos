@@ -365,6 +365,20 @@ deploy_clients() {
         else
             CLIENT_STATUS["$host"]="FAILED"
             echo "  $(red "✗") $host FAILED"
+            echo "  Collecting quick diagnostics from $host..."
+            ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$host")@${host}" \
+                "set -o pipefail; \
+                 echo '    --- snapclient unit state ---'; \
+                 systemctl status snapclient --no-pager -l || true; \
+                 echo; \
+                 echo '    --- recent snapclient logs ---'; \
+                 journalctl -u snapclient -n 60 --no-pager || true; \
+                 echo; \
+                 echo '    --- ALSA devices ---'; \
+                 aplay -l || true; \
+                 echo; \
+                 echo '    --- ALSA controls for resolved device hint ---'; \
+                 amixer scontrols || true" || true
         fi
         echo ""
     done
