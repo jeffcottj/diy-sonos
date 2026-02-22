@@ -33,8 +33,9 @@ import re
 import sys
 
 server_ip = ""
-ssh_user = "pi"
-client_ips = []
+default_ssh_user = "pi"
+server_ssh_user = ""
+client_entries = []
 in_clients = False
 
 for line in open(sys.argv[1], encoding="utf-8"):
@@ -47,31 +48,56 @@ for line in open(sys.argv[1], encoding="utf-8"):
     if m:
         server_ip = m.group(1)
 
+    m = re.match(r'^\s*ip:\s*"?([^"#\s]+)"?', stripped)
+    if m and not in_clients and stripped.startswith('ip:'):
+        server_ip = m.group(1)
+
     m = re.match(r'^ssh_user:\s*"?([^"#\s]+)"?', stripped)
     if m:
-        ssh_user = m.group(1)
+        default_ssh_user = m.group(1)
+
+    if stripped.startswith('server:'):
+        in_clients = False
+
+    if stripped.startswith('  ssh_user:') and not in_clients:
+        m = re.match(r'^\s*ssh_user:\s*"?([^"#\s]+)"?', stripped)
+        if m:
+            server_ssh_user = m.group(1)
 
     if in_clients:
         m = re.match(r'^\s+-\s+ip:\s*"?([0-9.]+)"?', stripped)
         if m:
-            client_ips.append(m.group(1))
+            client_entries.append([m.group(1), default_ssh_user])
+            continue
+        m = re.match(r'^\s+ssh_user:\s*"?([^"#\s]+)"?', stripped)
+        if m and client_entries:
+            client_entries[-1][1] = m.group(1)
 
-print(f"SSH_USER={ssh_user}")
+print(f"DEFAULT_SSH_USER={default_ssh_user}")
+print(f"SERVER_SSH_USER={server_ssh_user or default_ssh_user}")
 print(f"SERVER_IP={server_ip}")
-for ip in client_ips:
-    print(f"CLIENT_IP={ip}")
+for ip, user in client_entries:
+    print(f"CLIENT={ip}|{user}")
 PYEOF
 )"
 
     SSH_USER="pi"
+    SERVER_SSH_USER="pi"
     SERVER_IP=""
     CLIENT_IPS=()
+    declare -gA CLIENT_SSH_USERS=()
 
     while IFS='=' read -r key val; do
         case "$key" in
-            SSH_USER) SSH_USER="$val" ;;
+            DEFAULT_SSH_USER) SSH_USER="$val" ;;
+            SERVER_SSH_USER) SERVER_SSH_USER="$val" ;;
             SERVER_IP) SERVER_IP="$val" ;;
-            CLIENT_IP) CLIENT_IPS+=("$val") ;;
+            CLIENT)
+                local ip="${val%%|*}"
+                local user="${val#*|}"
+                CLIENT_IPS+=("$ip")
+                CLIENT_SSH_USERS["$ip"]="$user"
+                ;;
         esac
     done <<< "$parsed"
 
@@ -88,13 +114,18 @@ run_connectivity_check() {
     echo "  Testing SSH connectivity for configured hosts..."
 
     local failed=0
-    local host
+    local host ssh_user
     for host in "$SERVER_IP" "${CLIENT_IPS[@]}"; do
+        if [[ "$host" == "$SERVER_IP" ]]; then
+            ssh_user="$SERVER_SSH_USER"
+        else
+            ssh_user="${CLIENT_SSH_USERS[$host]:-$SSH_USER}"
+        fi
         printf "  %-16s" "$host"
-        if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes "${SSH_USER}@${host}" true 2>/dev/null; then
+        if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes "${ssh_user}@${host}" true 2>/dev/null; then
             echo "$(green ok)"
         else
-            echo "$(yellow warning)"
+            echo "$(yellow warning) (user: ${ssh_user})"
             failed=1
         fi
     done

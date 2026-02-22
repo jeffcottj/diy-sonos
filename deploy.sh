@@ -58,16 +58,17 @@ classify_ssh_error() {
 
 print_ssh_fix_hint() {
     local host="$1"
-    local reason="$2"
+    local ssh_user="$2"
+    local reason="$3"
 
     case "$reason" in
         auth_failed)
-            echo "    Fix: run ./configure.sh --copy-keys (or): ssh-copy-id ${SSH_USER}@${host}"
+            echo "    Fix: run ./configure.sh --copy-keys (or): ssh-copy-id ${ssh_user}@${host}"
             ;;
         host_unreachable)
             echo "    Fix: verify network + ssh service:"
             echo "         ping -c 1 ${host}"
-            echo "         ssh ${SSH_USER}@${host}"
+            echo "         ssh ${ssh_user}@${host}"
             ;;
         host_key_issue)
             echo "    Fix: refresh known_hosts entry:"
@@ -75,7 +76,7 @@ print_ssh_fix_hint() {
             echo "         ssh-keyscan -H ${host} >> ~/.ssh/known_hosts"
             ;;
         *)
-            echo "    Fix: inspect verbose SSH output: ssh -vv ${SSH_USER}@${host}"
+            echo "    Fix: inspect verbose SSH output: ssh -vv ${ssh_user}@${host}"
             ;;
     esac
 }
@@ -134,8 +135,9 @@ with open(sys.argv[1], encoding="utf-8") as f:
     lines = f.readlines()
 
 server_ip = ""
-ssh_user = "pi"
-client_ips = []
+default_ssh_user = "pi"
+server_ssh_user = ""
+client_entries = []
 
 in_clients = False
 in_spotify = False
@@ -154,29 +156,50 @@ for line in lines:
 
     m = re.match(r'^ssh_user:\s*"?([^"#\s]+)"?', stripped)
     if m:
-        ssh_user = m.group(1)
+        default_ssh_user = m.group(1)
+
+    if stripped.startswith('server:'):
+        in_clients = False
+
+    if stripped.startswith('  ssh_user:') and not in_clients:
+        m = re.match(r'^\s*ssh_user:\s*"?([^"#\s]+)"?', stripped)
+        if m:
+            server_ssh_user = m.group(1)
 
     if in_clients:
         m = re.match(r'^\s+-\s+ip:\s*"?([0-9.]+)"?', stripped)
         if m:
-            client_ips.append(m.group(1))
+            client_entries.append([m.group(1), default_ssh_user])
+            continue
+        m = re.match(r'^\s+ssh_user:\s*"?([^"#\s]+)"?', stripped)
+        if m and client_entries:
+            client_entries[-1][1] = m.group(1)
 
 print(f"SERVER_IP={server_ip}")
-print(f"SSH_USER={ssh_user}")
-for ip in client_ips:
-    print(f"CLIENT_IP={ip}")
+print(f"SSH_USER={default_ssh_user}")
+print(f"SERVER_SSH_USER={server_ssh_user or default_ssh_user}")
+for ip, user in client_entries:
+    print(f"CLIENT={ip}|{user}")
 PYEOF
 )"
 
     SERVER_IP=""
     SSH_USER="pi"
+    SERVER_SSH_USER="pi"
     CLIENT_IPS=()
+    declare -gA CLIENT_SSH_USERS=()
 
     while IFS='=' read -r key val; do
         case "$key" in
             SERVER_IP)  SERVER_IP="$val" ;;
             SSH_USER)   SSH_USER="$val" ;;
-            CLIENT_IP)  CLIENT_IPS+=("$val") ;;
+            SERVER_SSH_USER) SERVER_SSH_USER="$val" ;;
+            CLIENT)
+                local ip="${val%%|*}"
+                local user="${val#*|}"
+                CLIENT_IPS+=("$ip")
+                CLIENT_SSH_USERS["$ip"]="$user"
+                ;;
         esac
     done <<< "$parsed"
 
@@ -191,6 +214,15 @@ PYEOF
     fi
 }
 
+ssh_user_for_host() {
+    local host="$1"
+    if [[ "$host" == "$SERVER_IP" ]]; then
+        echo "$SERVER_SSH_USER"
+        return
+    fi
+    echo "${CLIENT_SSH_USERS[$host]:-$SSH_USER}"
+}
+
 # ---------------------------------------------------------------------------
 # Pre-flight: verify SSH connectivity for all hosts
 # ---------------------------------------------------------------------------
@@ -202,6 +234,8 @@ run_preflight() {
     ensure_local_ssh_key || true
 
     for host in "${all_hosts[@]}"; do
+        local ssh_user
+        ssh_user="$(ssh_user_for_host "$host")"
         printf "  %-20s" "$host"
 
         if ! ensure_host_key_trusted "$host"; then
@@ -211,7 +245,7 @@ run_preflight() {
 
         local err_file
         err_file="$(mktemp)"
-        if ssh "${SSH_OPTS[@]}" "${SSH_USER}@${host}" true 2>"$err_file"; then
+        if ssh "${SSH_OPTS[@]}" "${ssh_user}@${host}" true 2>"$err_file"; then
             echo "$(green "ok")"
         else
             echo "$(red "FAILED")"
@@ -219,7 +253,7 @@ run_preflight() {
             err_text="$(<"$err_file")"
             reason="$(classify_ssh_error "$err_text")"
             echo "    Reason: $reason"
-            print_ssh_fix_hint "$host" "$reason"
+            print_ssh_fix_hint "$host" "$ssh_user" "$reason"
             failed_hosts+=("$host")
         fi
         rm -f "$err_file"
@@ -241,16 +275,20 @@ sync_repo() {
     local host="$1"
     echo "  Syncing repository..."
     if command -v rsync &>/dev/null; then
+        local ssh_user
+        ssh_user="$(ssh_user_for_host "$host")"
         rsync -az \
             --exclude='.git' \
             --exclude='.diy-sonos.generated.yml' \
             "$SCRIPT_DIR/" \
-            "${SSH_USER}@${host}:${REMOTE_DIR}/"
+            "${ssh_user}@${host}:${REMOTE_DIR}/"
     else
         # tar-over-SSH fallback
+        local ssh_user
+        ssh_user="$(ssh_user_for_host "$host")"
         tar --exclude='.git' --exclude='.diy-sonos.generated.yml' \
             -czf - -C "$SCRIPT_DIR" . | \
-            ssh "${SSH_OPTS[@]}" "${SSH_USER}@${host}" \
+            ssh "${SSH_OPTS[@]}" "${ssh_user}@${host}" \
                 "mkdir -p ${REMOTE_DIR} && tar -xzf - -C ${REMOTE_DIR}"
     fi
 }
@@ -264,7 +302,7 @@ deploy_server() {
     sync_repo "$SERVER_IP"
 
     echo "  Running sudo ./setup.sh server (output streamed)..."
-    ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}" \
+    ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" \
         "cd ${REMOTE_DIR} && sudo ./setup.sh server"
 
     echo ""
@@ -276,7 +314,7 @@ deploy_server() {
 surface_oauth_url() {
     local callback_port cache_dir
 
-    callback_port="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
+    callback_port="$(ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
 import re
 try:
     txt = open('config.yml').read()
@@ -286,7 +324,7 @@ except: print('4000')
 \"" 2>/dev/null || echo "4000")"
 
     # Try to read cache_dir from remote config; default to /var/cache/librespot
-    cache_dir="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
+    cache_dir="$(ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
 import re
 try:
     txt = open('config.yml').read()
@@ -314,9 +352,9 @@ deploy_clients() {
 
     declare -g -A CLIENT_STATUS
     for host in "${CLIENT_IPS[@]}"; do
-        echo "$(bold "  → $host")"
+           echo "$(bold "  → $host")"
         if sync_repo "$host" && \
-           ssh "${SSH_OPTS[@]}" "${SSH_USER}@${host}" \
+           ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$host")@${host}" \
                "cd ${REMOTE_DIR} && sudo ./setup.sh client"; then
             CLIENT_STATUS["$host"]="ok"
             echo "  $(green "✓") $host done"
