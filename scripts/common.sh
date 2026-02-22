@@ -424,3 +424,105 @@ systemd_enable_restart() {
         echo "Started: $svc"
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Doctor / health-check helpers
+# ---------------------------------------------------------------------------
+
+doctor_mark() {
+    local status="$1"
+    case "$status" in
+        pass) printf '[PASS]' ;;
+        fail) printf '[FAIL]' ;;
+        warn) printf '[WARN]' ;;
+        *)    printf '[INFO]' ;;
+    esac
+}
+
+doctor_report() {
+    local status="$1"
+    local message="$2"
+    local remediation="${3:-}"
+
+    printf '  %s %s\n' "$(doctor_mark "$status")" "$message"
+    if [[ -n "$remediation" ]]; then
+        printf '         -> %s\n' "$remediation"
+    fi
+}
+
+doctor_check_systemd_service() {
+    local service_name="$1"
+    local remediation="${2:-sudo systemctl restart ${service_name}}"
+
+    if ! systemctl list-unit-files --type=service --all | awk '{print $1}' | grep -qx "${service_name}.service"; then
+        doctor_report fail "${service_name}.service is not installed." "Install and configure with: sudo ./setup.sh server|client (as appropriate)"
+        return 1
+    fi
+
+    local enabled_state
+    enabled_state="$(systemctl is-enabled "$service_name" 2>/dev/null || true)"
+    local active_state
+    active_state="$(systemctl is-active "$service_name" 2>/dev/null || true)"
+
+    local failed=0
+    if [[ "$enabled_state" == "enabled" ]]; then
+        doctor_report pass "${service_name}.service is enabled."
+    else
+        doctor_report fail "${service_name}.service is not enabled (state: ${enabled_state:-unknown})." "sudo systemctl enable ${service_name}"
+        failed=1
+    fi
+
+    if [[ "$active_state" == "active" ]]; then
+        doctor_report pass "${service_name}.service is active."
+    else
+        doctor_report fail "${service_name}.service is not active (state: ${active_state:-unknown})." "$remediation"
+        failed=1
+    fi
+
+    return $failed
+}
+
+doctor_check_listener() {
+    local port="$1"
+    local process_hint="$2"
+
+    if ss -ltnp 2>/dev/null | awk -v p=":${port}" '$4 ~ p"$" { found=1 } END { exit(found ? 0 : 1) }'; then
+        doctor_report pass "TCP port ${port} is listening (${process_hint})."
+        return 0
+    fi
+
+    doctor_report fail "TCP port ${port} is not listening (${process_hint})." "sudo ss -ltnp | grep ':${port}' && sudo systemctl restart ${process_hint}"
+    return 1
+}
+
+doctor_check_fifo() {
+    local fifo_path="$1"
+    if [[ -p "$fifo_path" ]]; then
+        doctor_report pass "FIFO exists: ${fifo_path}"
+        return 0
+    fi
+    doctor_report fail "FIFO missing or not a named pipe: ${fifo_path}" "sudo rm -f '${fifo_path}' && sudo mkfifo '${fifo_path}'"
+    return 1
+}
+
+doctor_show_recent_errors() {
+    local unit="$1"
+    local lines="${2:-15}"
+
+    echo "  Recent errors (${unit}.service):"
+    if ! journalctl -u "${unit}.service" -p err -n "$lines" --no-pager 2>/dev/null | sed 's/^/    /'; then
+        doctor_report warn "Unable to read journal for ${unit}.service" "Try with sudo: sudo journalctl -u ${unit}.service -p err -n ${lines} --no-pager"
+    fi
+}
+
+doctor_check_librespot_service() {
+    doctor_check_systemd_service "librespot" "sudo systemctl restart librespot"
+}
+
+doctor_check_snapserver_service() {
+    doctor_check_systemd_service "snapserver" "sudo systemctl restart snapserver"
+}
+
+doctor_check_snapclient_service() {
+    doctor_check_systemd_service "snapclient" "sudo systemctl restart snapclient"
+}

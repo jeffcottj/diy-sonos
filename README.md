@@ -80,6 +80,16 @@ sudo ./setup.sh server
 Preflight validates required binaries (`apt-get`, `systemctl`), network reachability, supported OS/arch, and key config values before install. `setup.sh server|client` runs this automatically and aborts early if checks fail.
 
 
+### 3.6 Run runtime health checks (doctor)
+
+```bash
+sudo ./setup.sh doctor server
+sudo ./setup.sh doctor client
+```
+
+Doctor reports service states, key ports/listeners, FIFO presence on server, resolved audio device on client, and recent error excerpts from systemd journals. Failed checks include recommended remediation commands.
+
+
 ### 4. Authenticate with Spotify (first run only)
 
 See [First-Run Spotify Authentication](#first-run-spotify-authentication) below.
@@ -209,6 +219,9 @@ aplay -l
 ### No sound on a client
 
 ```bash
+# Run built-in diagnostics first
+sudo ./setup.sh doctor client
+
 # Check snapclient is running
 sudo systemctl status snapclient
 
