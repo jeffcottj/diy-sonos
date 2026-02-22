@@ -1,94 +1,113 @@
-# CLAUDE.md — DIY Sonos Architecture Notes
+# CLAUDE.md
 
-## Overview
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-DIY Sonos converts Raspberry Pis into a synchronized multi-room audio system. A Pi 5 acts as the server (Spotify Connect receiver + audio broadcaster) and Pi Zero 2 Ws act as clients (synchronized playback via USB DACs).
+## What This Project Does
 
-## Tech Stack
-
-| Component | Technology | Why |
-|-----------|-----------|-----|
-| Spotify Connect | librespot (via raspotify apt repo) | Pre-built arm binary, OAuth support, active maintenance |
-| Synchronized audio | Snapcast (snapserver + snapclient) | Purpose-built for multi-room sync; .deb packages for arm64/armhf |
-| Config parsing | Python3 + PyYAML | Always available on Pi OS; no sed escaping issues |
-| Template rendering | Python regex substitution | Simple `{{VAR}}` → env var, no extra dependencies |
-| Audio pipe | Linux named FIFO | Zero-copy IPC between librespot and snapserver |
-
-## Key File Index
-
-| File | Purpose |
-|------|---------|
-| `setup.sh` | Entry point; validates args, loads config, delegates |
-| `config.yml` | User-editable configuration |
-| `scripts/common.sh` | Shared functions (config parsing, pkg install, systemd, ALSA) |
-| `scripts/setup-server.sh` | Server install logic |
-| `scripts/setup-client.sh` | Client install logic |
-| `templates/snapserver.conf.tmpl` | snapserver config template |
-| `templates/librespot.service.tmpl` | librespot systemd unit template |
-| `templates/snapserver.service.tmpl` | snapserver systemd unit template |
-| `templates/snapclient.service.tmpl` | snapclient systemd unit template |
-
-## Port Reference
-
-| Port | Service | Direction |
-|------|---------|-----------|
-| 1704 | snapserver audio stream | Pi 5 → Pi Zero clients (TCP) |
-| 1780 | snapserver HTTP control API | LAN → Pi 5 |
-| 5353 | mDNS (avahi) | Pi 5 → LAN (Spotify discovery) |
-
-## Config Variable Naming
-
-`parse_config()` in `common.sh` flattens YAML with `__` separators and uppercases:
+Turns Raspberry Pis into a synchronized multi-room audio system. A Pi 5 runs Spotify Connect (librespot) and streams audio via Snapcast; Pi Zero 2 Ws play back in sync through USB DACs.
 
 ```
-spotify.device_name  →  SPOTIFY__DEVICE_NAME
-snapserver.fifo_path →  SNAPSERVER__FIFO_PATH
-server_ip            →  SERVER_IP
+Spotify App → librespot (Pi 5) → /tmp/snapfifo (FIFO) → snapserver → snapclient(s) → ALSA → USB DAC
 ```
 
-Templates use `{{SPOTIFY__DEVICE_NAME}}` syntax. The Python renderer substitutes from `os.environ`.
+## Validating Changes
 
-## Idempotency Guarantees
+There is no test suite. Use these to verify correctness:
 
-- `pkg_install`: checks `dpkg -s` before installing
-- `install_deb`: checks installed version matches filename version before downloading
-- `ensure_fifo`: only creates if absent
-- `ensure_dir`: `mkdir -p` is idempotent
-- `download_file`: skips if file exists
-- `render_template`: always overwrites (config may have changed)
-- `systemd_enable_restart`: restarts if running, starts if stopped
+```bash
+# Syntax-check all shell scripts
+bash -n setup.sh install.sh
+bash -n scripts/common.sh scripts/setup-server.sh scripts/setup-client.sh
+bash -n scripts/bootstrap-clients.sh scripts/librespot-auth-helper.sh
 
-## Edge Cases and Solutions
+# Verify config parsing produces expected env vars
+python3 - config.yml <<'EOF'
+import sys, yaml
+def flatten(obj, prefix=""):
+    items = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = (prefix + "__" + str(k)) if prefix else str(k)
+            items.update(flatten(v, key))
+    else:
+        items[prefix] = obj
+    return items
+with open(sys.argv[1]) as f:
+    data = yaml.safe_load(f)
+for k, v in flatten(data).items():
+    print(k.upper().replace("-", "_"), "=", repr(str(v)))
+EOF
+```
 
-| Issue | Solution |
-|-------|---------|
-| FIFO disappears on reboot (tmpfs) | `/etc/tmpfiles.d/snapfifo.conf` recreates it via `systemd-tmpfiles` |
-| Kernel blocks FIFO writes in `/tmp` | `fs.protected_fifos=0` via `/etc/sysctl.d/99-snapfifo.conf` |
-| librespot/snapserver startup race | `Before=snapserver.service` in librespot unit; `mode=read` in pipe source blocks snapserver until librespot opens write end |
-| USB DAC card number changes on reboot | User can hardcode `hw:N,0` in config; `auto` is a best-effort fallback |
-| arm64 vs armhf Pi Zero 2 W | `detect_arch` maps `uname -m` → Debian arch; snapcast provides both |
-| Snapcast deb filename includes OS codename | `detect_os_codename` sets `$OS_CODENAME` for correct deb URL |
-| raspotify installs its own service | Masked with `systemctl mask raspotify.service`; we use our own librespot unit |
-| Snapclient deb may pull in snapserver | Masked with `systemctl mask snapserver.service` on client machines |
+## setup.sh — Command Modes
 
-## Pi Zero 2 W Considerations
+`setup.sh` is the sole entry point and dispatches to sub-modes:
 
-- **Architecture:** Pi Zero 2 W is aarch64 (arm64) when running 64-bit Pi OS, armhf on 32-bit.
-- **CPU:** Quad-core Cortex-A53 @ 1 GHz. FLAC decoding is fine; avoid running other heavy services.
-- **RAM:** 512 MB. snapclient is lightweight; keep buffer_ms reasonable (1000–2000 ms).
-- **Wi-Fi:** single-band 2.4 GHz only. Ensure good signal to avoid dropouts.
-- **Audio:** no built-in audio jack that works well. USB DAC dongles are required.
+| Mode | Usage | What it does |
+|------|-------|--------------|
+| `init` | `./setup.sh init [--role server\|client] [--server-ip IP] [--device-name NAME] [--audio-device DEV]` | Interactive wizard; writes `.diy-sonos.generated.yml` |
+| `preflight` | `./setup.sh preflight server\|client` | Validates binaries, network, OS/arch, config values — no writes |
+| `server` | `sudo ./setup.sh server` | Full server install (runs preflight first) |
+| `client` | `sudo ./setup.sh client` | Full client install (runs preflight first) |
+| `upgrade` | `sudo ./setup.sh upgrade [--role server\|client]` | Idempotent reinstall; detects role from installed services if not specified |
+| `doctor` | `sudo ./setup.sh doctor server\|client` | Runtime health checks: services, ports, FIFO, audio device, recent errors |
+| `version` | `./setup.sh version` | Prints `.diy-sonos-version` metadata |
+
+## Config System
+
+### Three-layer precedence (highest wins)
+
+1. **CLI flags** — `--server-ip`, `--device-name`, `--audio-device` (applied by `apply_cli_config_overrides()`)
+2. **`.diy-sonos.generated.yml`** — written by `./setup.sh init`; not committed to git
+3. **`config.yml`** — repo defaults; the only file users should hand-edit
+
+`parse_config_files()` in `common.sh` merges layers in order. Both files are flattened with `__` separators and uppercased:
+
+```
+spotify.device_name  →  $SPOTIFY__DEVICE_NAME
+snapserver.fifo_path →  $SNAPSERVER__FIFO_PATH
+server_ip            →  $SERVER_IP
+```
+
+### Accessing config in scripts
+
+```bash
+cfg spotify device_name        # nested key → $SPOTIFY__DEVICE_NAME
+cfg server_ip                  # top-level key → $SERVER_IP
+cfg snapclient audio_device auto  # with fallback default
+```
+
+### Templates
+
+Files in `templates/` use `{{VAR}}` syntax. `render_template src dst` substitutes from `os.environ` via Python regex. Adding a new config key requires: (1) add to `config.yml`, (2) reference as `{{SECTION__KEY}}` in template or `cfg section key` in scripts, (3) update config table in README.md.
+
+## Script Architecture
+
+`setup.sh` sources `scripts/common.sh` (all shared functions), calls `parse_config_files`, then sources `scripts/setup-server.sh` or `scripts/setup-client.sh`. **The setup scripts are sourced, not executed** — they inherit all exports and functions from the parent shell.
+
+`scripts/bootstrap-clients.sh` runs from an admin laptop, tars and pushes the repo to each Pi via SSH, runs `./setup.sh init --role client` with per-client overrides, applies latency from `clients.yml`, then runs `sudo ./setup.sh client`. Host list comes from `--hosts CSV` or `--hosts-file`; per-client config overrides come from `clients.yml`.
 
 ## Snapcast Version
 
-Snapcast version is centralized in `scripts/common.sh` as `SNAPCAST_VER_DEFAULT`. Both `setup-server.sh` and `setup-client.sh` call `require_snapcast_version()` to read it and fail fast if it is empty. To upgrade, change `SNAPCAST_VER_DEFAULT` once and re-run setup. The `install_deb` function will detect the version mismatch and reinstall.
+Centralized in `scripts/common.sh` as `SNAPCAST_VER_DEFAULT`. Both setup scripts call `require_snapcast_version()` — update one variable to upgrade both. `install_deb()` detects the version mismatch from the deb filename and reinstalls automatically.
 
-## First-Run OAuth (librespot)
+## Key Edge Cases
 
-librespot requires Spotify OAuth authentication on first run. The auth URL appears in journald:
+| Issue | Solution |
+|-------|---------|
+| FIFO disappears on reboot | `/etc/tmpfiles.d/snapfifo.conf` recreates it at boot |
+| Kernel blocks FIFO writes in `/tmp` | `fs.protected_fifos=0` in `/etc/sysctl.d/99-snapfifo.conf` |
+| librespot/snapserver startup race | `Before=snapserver.service` in librespot unit; `mode=read` in pipe source blocks until write end opens |
+| raspotify installs its own service | Masked after install; we manage librespot with our own unit |
+| snapclient deb may pull in snapserver | snapserver masked on client machines |
+| Snapcast deb URL includes OS codename | `detect_os_codename()` sets `$OS_CODENAME` from `/etc/os-release` |
+| `spotify.normalise` is bool in YAML | `parse_config()` explicitly handles Python `bool` → `"true"`/`"false"` string before export; setup-server.sh converts to the actual librespot flag |
 
-```bash
-sudo journalctl -u librespot -f
-```
+## Ports
 
-Credentials are cached in `spotify.cache_dir` (default `/var/cache/librespot`). Once cached, re-authentication is not needed unless the cache is deleted.
+| Port | Purpose |
+|------|---------|
+| 1704 | Snapcast audio stream (Pi 5 → clients, TCP) |
+| 1780 | Snapcast HTTP control API |
+| 4000 | librespot OAuth callback (configurable via `spotify.oauth_callback_port`) |
+| 5353 | mDNS via avahi (Spotify device discovery) |
