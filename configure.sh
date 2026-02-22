@@ -226,7 +226,7 @@ prompt_ipv4_with_default() {
 choose_profile_preset() {
     local default_choice="1"
     echo "Choose tuning preset:"
-    echo "  1) Basic home setup (recommended)"
+    echo "  1) Basic home setup (fastest path, recommended for first install)"
     echo "  2) Advanced tuning"
     while true; do
         local choice
