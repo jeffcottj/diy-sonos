@@ -5,6 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
 
 echo ""
 echo "=========================================="
@@ -25,6 +26,9 @@ echo ""
 echo "--- Installing base dependencies ---"
 apt_update_if_stale
 pkg_install wget curl ca-certificates alsa-utils
+
+# Cleanup/mask legacy units and binaries before installing fresh units.
+cleanup_legacy_for_role client
 
 # ---------------------------------------------------------------------------
 # 3. Install snapclient
