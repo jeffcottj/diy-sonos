@@ -137,6 +137,7 @@ with open(sys.argv[1], encoding="utf-8") as f:
 server_ip = ""
 default_ssh_user = "pi"
 server_ssh_user = ""
+spotify_device_name = "DIY Sonos"
 client_entries = []
 
 in_clients = False
@@ -158,6 +159,11 @@ for line in lines:
     if m:
         default_ssh_user = m.group(1)
 
+    if in_spotify:
+        m = re.match(r'^\s*device_name:\s*"?([^"#]+?)"?\s*$', stripped)
+        if m:
+            spotify_device_name = m.group(1).strip()
+
     if stripped.startswith('server:'):
         in_clients = False
 
@@ -178,6 +184,7 @@ for line in lines:
 print(f"SERVER_IP={server_ip}")
 print(f"SSH_USER={default_ssh_user}")
 print(f"SERVER_SSH_USER={server_ssh_user or default_ssh_user}")
+print(f"SPOTIFY_DEVICE_NAME={spotify_device_name}")
 for ip, user in client_entries:
     print(f"CLIENT={ip}|{user}")
 PYEOF
@@ -186,6 +193,7 @@ PYEOF
     SERVER_IP=""
     SSH_USER="pi"
     SERVER_SSH_USER="pi"
+    SPOTIFY_DEVICE_NAME="DIY Sonos"
     CLIENT_IPS=()
     declare -gA CLIENT_SSH_USERS=()
 
@@ -194,6 +202,7 @@ PYEOF
             SERVER_IP)  SERVER_IP="$val" ;;
             SSH_USER)   SSH_USER="$val" ;;
             SERVER_SSH_USER) SERVER_SSH_USER="$val" ;;
+            SPOTIFY_DEVICE_NAME) SPOTIFY_DEVICE_NAME="$val" ;;
             CLIENT)
                 local ip="${val%%|*}"
                 local user="${val#*|}"
@@ -212,6 +221,35 @@ PYEOF
         echo "No clients found in config.yml. Run ./configure.sh first." >&2
         exit 1
     fi
+}
+
+server_diagnostics() {
+    local remote_cmd
+    remote_cmd=$(cat <<'EOF'
+set -e
+cd ~/diy-sonos
+
+echo ""
+echo "━━ Server runtime diagnostics ━━"
+
+echo "  Spotify auth cache status:"
+sudo librespot-auth-helper verify-auth-cache /var/cache/librespot || true
+echo ""
+
+echo "  Service state snapshot:"
+sudo systemctl --no-pager --full status librespot snapserver avahi-daemon 2>/dev/null || true
+echo ""
+
+echo "  Doctor check (server):"
+if sudo ./setup.sh doctor server; then
+  echo "  ✓ Doctor passed"
+else
+  echo "  ✗ Doctor reported failures"
+fi
+EOF
+)
+
+    ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" "$remote_cmd"
 }
 
 ssh_user_for_host() {
@@ -304,6 +342,8 @@ deploy_server() {
     echo "  Running sudo ./setup.sh server (output streamed)..."
     ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" \
         "cd ${REMOTE_DIR} && sudo ./setup.sh server"
+
+    server_diagnostics
 
     echo ""
 }
@@ -407,7 +447,7 @@ print_summary() {
     echo ""
     if [[ $any_failed -eq 0 ]]; then
         echo "$(green "All devices deployed successfully.")"
-        echo "Open Spotify and select \"$(bold "$SERVER_IP")\" to start playing."
+        echo "Open Spotify and select \"$(bold "$SPOTIFY_DEVICE_NAME")\" to start playing."
     else
         echo "$(red "Some deployments failed.") Check output above for details."
         exit 1
