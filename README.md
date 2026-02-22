@@ -1,6 +1,8 @@
 # DIY Sonos
 
-Turn Raspberry Pis into a Sonos-like synchronized multi-room audio system. A Pi 5 runs Spotify Connect and streams audio; Pi Zero 2 Ws play back in perfect sync via USB DACs.
+Turn small Linux devices into a Sonos-like synchronized multi-room audio system. A server device runs Spotify Connect and streams audio; client devices play back in perfect sync via USB DACs.
+
+Tested hardware: Raspberry Pi 5 (server) and Raspberry Pi Zero 2 W units (clients).
 
 ## Audio Flow
 
@@ -8,17 +10,17 @@ Turn Raspberry Pis into a Sonos-like synchronized multi-room audio system. A Pi 
 Spotify App
     │ (mDNS / Spotify Connect)
     ▼
-librespot  (Pi 5)
+librespot  (server device)
     │  raw PCM S16 44100:16:2 written to named pipe
     ▼
 /tmp/snapfifo  (FIFO)
     │
     ▼
-snapserver  (Pi 5 — encodes FLAC, streams over TCP 1704)
+snapserver  (server device — encodes FLAC, streams over TCP 1704)
     │
     ├──────────────────────────┐
     ▼                          ▼
-snapclient (Pi Zero 2 W)  snapclient (Pi Zero 2 W)  ...
+snapclient (client device)  snapclient (client device)  ...
     │                          │
   ALSA → USB DAC          ALSA → USB DAC
     │                          │
@@ -29,22 +31,22 @@ snapclient (Pi Zero 2 W)  snapclient (Pi Zero 2 W)  ...
 
 | Device | Role | Notes |
 |--------|------|-------|
-| Raspberry Pi 5 | Server | Runs librespot + snapserver |
-| Raspberry Pi Zero 2 W (×N) | Clients | One per room |
-| USB audio DAC dongle (×N) | Audio output | One per Pi Zero |
+| Linux-capable device (e.g., Raspberry Pi 5) | Server | Runs librespot + snapserver |
+| Linux-capable device (×N, e.g., Raspberry Pi Zero 2 W) | Clients | One per room |
+| USB audio DAC dongle (×N) | Audio output | One per client device |
 | USB speakers / 3.5mm speakers | Output | Per room |
 
-All Pis must be on the same local network.
+All devices must be on the same local network.
 
 ## Prerequisites
 
-All Pis must have SSH key authentication set up so `deploy.sh` can connect without a password prompt. Run once from your laptop:
+All devices must have SSH key authentication set up so `deploy.sh` can connect without a password prompt. Run once from your laptop:
 
 ```bash
 ./configure.sh --copy-keys
 ```
 
-This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connected to a Pi before, you may be asked to accept the host key on first connection.
+This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connected to a target device before, you may be asked to accept the host key on first connection.
 
 ---
 
@@ -76,10 +78,10 @@ Run the interactive wizard on your laptop to collect IPs and write `config.yml`:
 DIY Sonos — Setup Wizard
 
 Speaker system name (shown in Spotify) [DIY Sonos]: Living Room
-Pi 5 server IP: 192.168.1.100
-SSH username on each Pi [pi]:
+Server device IP: 192.168.1.100
+SSH username on each device [pi]:
 
-Enter client Pi IPs one at a time. Press Enter with no input when done.
+Enter client device IPs one at a time. Press Enter with no input when done.
   Client IP: 192.168.1.121
   Client IP: 192.168.1.122
   Client IP:
@@ -107,10 +109,10 @@ Then set up SSH keys (one-time):
 ```
 
 `deploy.sh` will:
-1. Verify SSH connectivity to all Pis (fails fast before touching anything)
-2. Rsync this repo to the server Pi and run `sudo ./setup.sh server`
+1. Verify SSH connectivity to all devices (fails fast before touching anything)
+2. Rsync this repo to the server device and run `sudo ./setup.sh server`
 3. Surface the Spotify OAuth URL (or print fallback instructions if not found)
-4. Rsync to each client Pi and run `sudo ./setup.sh client`
+4. Rsync to each client device and run `sudo ./setup.sh client`
 5. Print a pass/fail summary table
 
 ### 4. Open Spotify
@@ -158,13 +160,13 @@ Doctor reports service states, key ports/listeners, FIFO presence on server, res
 
 ### Advanced: on-device setup (alternative to deploy.sh)
 
-If you prefer to SSH into each Pi individually:
+If you prefer to SSH into each device individually:
 
 ```bash
-# On the Pi 5 (server)
+# On the server device
 sudo ./setup.sh server
 
-# On each Pi Zero 2 W (client)
+# On each client device
 sudo ./setup.sh client
 ```
 
@@ -272,8 +274,8 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | Key | Default | Description |
 |-----|---------|-------------|
 | `ssh_user` | `pi` | SSH username used by `deploy.sh` and `configure.sh --copy-keys` |
-| `server_ip` | `192.168.1.100` | IP of the Pi 5; used by clients to connect and by `deploy.sh` |
-| `clients[].ip` | _(none)_ | IP of each client Pi; used by `deploy.sh` |
+| `server_ip` | `192.168.1.100` | IP of the server device; used by clients to connect and by `deploy.sh` |
+| `clients[].ip` | _(none)_ | IP of each client device; used by `deploy.sh` |
 | `spotify.device_name` | `DIY Sonos` | Name shown in the Spotify device list |
 | `spotify.bitrate` | `320` | Spotify stream bitrate: 96, 160, or 320 kbps |
 | `spotify.normalise` | `true` | Enables librespot volume normalisation (`--enable-volume-normalisation` is included only when `true`) |
@@ -349,9 +351,9 @@ sudo systemctl status avahi-daemon
 ### Audio dropouts / poor sync
 
 - Increase `snapserver.buffer_ms` (e.g. 2000) in `config.yml` and re-run server setup.
-- Ensure all Pis have a strong Wi-Fi signal.
-- Check CPU load on Pi Zero clients: `top` — Pi Zero 2 W can handle FLAC decoding but should not be doing other heavy work.
-- Try `codec: pcm` in `config.yml` if FLAC decoding causes issues on Pi Zero.
+- Ensure all devices have a strong Wi-Fi signal.
+- Check CPU load on client devices: `top` — lower-power clients can handle FLAC decoding but should not be doing other heavy work.
+- Try `codec: pcm` in `config.yml` if FLAC decoding causes issues on lower-power clients.
 
 ### FIFO errors / librespot can't write to pipe
 

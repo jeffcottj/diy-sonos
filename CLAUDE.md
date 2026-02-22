@@ -4,10 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-Turns Raspberry Pis into a synchronized multi-room audio system. A Pi 5 runs Spotify Connect (librespot) and streams audio via Snapcast; Pi Zero 2 Ws play back in sync through USB DACs.
+Turns small Linux devices into a synchronized multi-room audio system. A server device runs Spotify Connect (librespot) and streams audio via Snapcast; client devices play back in sync through USB DACs.
 
 ```
-Spotify App → librespot (Pi 5) → /tmp/snapfifo (FIFO) → snapserver → snapclient(s) → ALSA → USB DAC
+Spotify App → librespot (server device) → /tmp/snapfifo (FIFO) → snapserver → snapclient(s) → ALSA → USB DAC
 ```
 
 ## Validating Changes
@@ -87,9 +87,9 @@ Files in `templates/` use `{{VAR}}` syntax. `render_template src dst` substitute
 
 `configure.sh` runs on the laptop, collects server/client IPs interactively, and writes `config.yml`. `--copy-keys` runs `ssh-copy-id` for all IPs found in `config.yml`.
 
-`deploy.sh` runs on the laptop, reads `config.yml` via inline Python (no pyyaml needed), SSH-checks all hosts, rsyncs the repo, runs `sudo ./setup.sh server` on the Pi 5, polls for the Spotify OAuth URL, then runs `sudo ./setup.sh client` on each client Pi. Prints a pass/fail summary table.
+`deploy.sh` runs on the laptop, reads `config.yml` via inline Python (no pyyaml needed), SSH-checks all hosts, rsyncs the repo, runs `sudo ./setup.sh server` on the server device, polls for the Spotify OAuth URL, then runs `sudo ./setup.sh client` on each client device. Prints a pass/fail summary table.
 
-`scripts/bootstrap-clients.sh` is a power-user tool: tars and pushes the repo to each Pi via SSH, runs `./setup.sh init --role client` with per-client overrides, applies latency from `clients.yml`, then runs `sudo ./setup.sh client`. Host list comes from `--hosts CSV` or `--hosts-file`; per-client config overrides come from `clients.yml`.
+`scripts/bootstrap-clients.sh` is a power-user tool: tars and pushes the repo to each client device via SSH, runs `./setup.sh init --role client` with per-client overrides, applies latency from `clients.yml`, then runs `sudo ./setup.sh client`. Host list comes from `--hosts CSV` or `--hosts-file`; per-client config overrides come from `clients.yml`.
 
 ## Snapcast Version
 
@@ -111,7 +111,7 @@ Centralized in `scripts/common.sh` as `SNAPCAST_VER_DEFAULT`. Both setup scripts
 
 | Port | Purpose |
 |------|---------|
-| 1704 | Snapcast audio stream (Pi 5 → clients, TCP) |
+| 1704 | Snapcast audio stream (server device → clients, TCP) |
 | 1780 | Snapcast HTTP control API |
 | 4000 | librespot OAuth callback (configurable via `spotify.oauth_callback_port`) |
 | 5353 | mDNS via avahi (Spotify device discovery) |

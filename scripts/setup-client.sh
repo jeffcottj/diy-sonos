@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-client.sh — install and configure snapclient on a Pi Zero 2 W
+# setup-client.sh — install and configure snapclient on a client device
 # Sourced by setup.sh after common.sh is loaded and config is parsed.
 
 set -euo pipefail
