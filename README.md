@@ -36,6 +36,18 @@ snapclient (Pi Zero 2 W)  snapclient (Pi Zero 2 W)  ...
 
 All Pis must be on the same local network.
 
+## Prerequisites
+
+All Pis must have SSH key authentication set up so `deploy.sh` can connect without a password prompt. Run once from your laptop:
+
+```bash
+./configure.sh --copy-keys
+```
+
+This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connected to a Pi before, you may be asked to accept the host key on first connection.
+
+---
+
 ## Quick Start
 
 ### 1. Install from release (recommended)
@@ -52,30 +64,60 @@ To pin a specific release tag or re-install safely:
 ./install.sh --tag v0.1.0
 ```
 
-### 2. Run the guided setup config wizard (recommended)
+### 2. Configure from your laptop
+
+Run the interactive wizard on your laptop to collect IPs and write `config.yml`:
 
 ```bash
-./setup.sh init
+./configure.sh
 ```
 
-The wizard asks for role (`server`/`client`), server IP, Spotify device name, and audio options, then writes `.diy-sonos.generated.yml`.
+```
+DIY Sonos — Setup Wizard
 
-You can also script this step non-interactively:
+Speaker system name (shown in Spotify) [DIY Sonos]: Living Room
+Pi 5 server IP: 192.168.1.100
+SSH username on each Pi [pi]:
+
+Enter client Pi IPs one at a time. Press Enter with no input when done.
+  Client IP: 192.168.1.121
+  Client IP: 192.168.1.122
+  Client IP:
+
+Configuration summary:
+  System name : Living Room
+  Server IP   : 192.168.1.100
+  SSH user    : pi
+  Clients     : 192.168.1.121 192.168.1.122
+Write config.yml? [Y/n]:
+
+✓ config.yml written.
+```
+
+Then set up SSH keys (one-time):
 
 ```bash
-./setup.sh init --role client --server-ip 192.168.1.100 --device-name "Kitchen" --audio-device hw:1,0
+./configure.sh --copy-keys
 ```
 
-Config precedence is:
-1. CLI flags (`--server-ip`, `--device-name`, `--audio-device`)
-2. `.diy-sonos.generated.yml`
-3. `config.yml` (repo defaults)
-
-### 3. Set up the server (Pi 5)
+### 3. Deploy everything from your laptop
 
 ```bash
-sudo ./setup.sh server
+./deploy.sh
 ```
+
+`deploy.sh` will:
+1. Verify SSH connectivity to all Pis (fails fast before touching anything)
+2. Rsync this repo to the server Pi and run `sudo ./setup.sh server`
+3. Surface the Spotify OAuth URL (or print fallback instructions if not found)
+4. Rsync to each client Pi and run `sudo ./setup.sh client`
+5. Print a pass/fail summary table
+
+### 4. Open Spotify
+
+Select your speaker system from the Spotify device list. Music plays on all speakers in sync.
+
+---
 
 ### Upgrade an existing install
 
@@ -93,7 +135,7 @@ sudo ./setup.sh upgrade --role client
 ```
 
 
-### 3.5 Run fast preflight checks (optional but recommended)
+### Run fast preflight checks (optional but recommended)
 
 ```bash
 ./setup.sh preflight server
@@ -103,7 +145,7 @@ sudo ./setup.sh upgrade --role client
 Preflight validates required binaries (`apt-get`, `systemctl`), network reachability, supported OS/arch, and key config values before install. `setup.sh server|client` runs this automatically and aborts early if checks fail.
 
 
-### 3.6 Run runtime health checks (doctor)
+### Run runtime health checks (doctor)
 
 ```bash
 sudo ./setup.sh doctor server
@@ -112,20 +154,40 @@ sudo ./setup.sh doctor client
 
 Doctor reports service states, key ports/listeners, FIFO presence on server, resolved audio device on client, and recent error excerpts from systemd journals. Failed checks include recommended remediation commands.
 
+---
 
-### 4. Authenticate with Spotify (first run only)
+### Advanced: on-device setup (alternative to deploy.sh)
 
-See [First-Run Spotify Authentication](#first-run-spotify-authentication) below.
-
-### 5. Set up each client (Pi Zero 2 W)
+If you prefer to SSH into each Pi individually:
 
 ```bash
+# On the Pi 5 (server)
+sudo ./setup.sh server
+
+# On each Pi Zero 2 W (client)
 sudo ./setup.sh client
 ```
 
-### 6. Bootstrap many clients remotely (optional)
+The guided init wizard (also runs on-device):
 
-Use the orchestrator script from your admin machine to copy this repo to each Pi and run `sudo ./setup.sh client` remotely:
+```bash
+./setup.sh init
+```
+
+Non-interactive:
+
+```bash
+./setup.sh init --role client --server-ip 192.168.1.100 --device-name "Kitchen" --audio-device hw:1,0
+```
+
+Config precedence is:
+1. CLI flags (`--server-ip`, `--device-name`, `--audio-device`)
+2. `.diy-sonos.generated.yml`
+3. `config.yml` (repo defaults)
+
+### Advanced: bootstrap many clients remotely
+
+For power users who need per-client latency overrides via an inventory file:
 
 ```bash
 ./scripts/bootstrap-clients.sh --hosts 192.168.1.121,192.168.1.122 --inventory clients.yml
@@ -143,8 +205,6 @@ The script reads per-client overrides from `clients.yml`:
 - `audio_device` → `snapclient.audio_device`
 
 Host selection comes from `--hosts` / `--hosts-file`; `clients.yml` supplies optional overrides by matching `clients[].host`.
-
-Open Spotify, select your device, and music plays on all speakers in sync.
 
 ### Advanced: manual YAML editing
 
@@ -167,9 +227,13 @@ Then run the same guided workflow (`./setup.sh init`, `sudo ./setup.sh server|cl
 
 ---
 
-## First-Run Spotify Authentication
+## Spotify Authentication
 
-librespot uses OAuth on first run. After `sudo ./setup.sh server`, use the helper command:
+On first run, librespot needs to authenticate with Spotify via OAuth. `deploy.sh` polls the librespot journal after server setup and prints the URL for you to open in a browser. Once authenticated, credentials are cached and no further action is needed on subsequent deployments.
+
+### Manual fallback
+
+If `deploy.sh` cannot find the URL (e.g. it appeared before polling started), SSH into the server and run:
 
 ```bash
 sudo librespot-auth-helper 4000 /var/cache/librespot
@@ -207,7 +271,9 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `server_ip` | `192.168.1.100` | IP of the Pi 5; used by clients to connect |
+| `ssh_user` | `pi` | SSH username used by `deploy.sh` and `configure.sh --copy-keys` |
+| `server_ip` | `192.168.1.100` | IP of the Pi 5; used by clients to connect and by `deploy.sh` |
+| `clients[].ip` | _(none)_ | IP of each client Pi; used by `deploy.sh` |
 | `spotify.device_name` | `DIY Sonos` | Name shown in the Spotify device list |
 | `spotify.bitrate` | `320` | Spotify stream bitrate: 96, 160, or 320 kbps |
 | `spotify.normalise` | `true` | Enables librespot volume normalisation (`--enable-volume-normalisation` is included only when `true`) |

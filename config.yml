@@ -1,5 +1,12 @@
+# ── Network ──────────────────────────────────────────────────────────────
+ssh_user: "pi"                    # SSH username used by deploy.sh
 server_ip: "192.168.1.100"        # IP of the Pi 5 (used by clients to connect)
 
+clients:                          # Speaker client IPs; used by deploy.sh
+  - ip: "192.168.1.121"
+  - ip: "192.168.1.122"
+
+# ── Spotify ───────────────────────────────────────────────────────────────
 spotify:
   device_name: "DIY Sonos"        # Name shown in Spotify app
   bitrate: 320                    # 96 | 160 | 320 kbps
@@ -9,6 +16,7 @@ spotify:
   oauth_callback_port: 4000       # Local callback port used during OAuth
   device_type: "speaker"          # Icon shown in Spotify app
 
+# ── Advanced ──────────────────────────────────────────────────────────────
 snapserver:
   fifo_path: "/tmp/snapfifo"
   sampleformat: "44100:16:2"      # Must match librespot output

@@ -16,7 +16,7 @@ There is no test suite. Use these to verify correctness:
 
 ```bash
 # Syntax-check all shell scripts
-bash -n setup.sh install.sh
+bash -n setup.sh install.sh configure.sh deploy.sh
 bash -n scripts/common.sh scripts/setup-server.sh scripts/setup-client.sh
 bash -n scripts/bootstrap-clients.sh scripts/librespot-auth-helper.sh
 
@@ -85,7 +85,11 @@ Files in `templates/` use `{{VAR}}` syntax. `render_template src dst` substitute
 
 `setup.sh` sources `scripts/common.sh` (all shared functions), calls `parse_config_files`, then sources `scripts/setup-server.sh` or `scripts/setup-client.sh`. **The setup scripts are sourced, not executed** — they inherit all exports and functions from the parent shell.
 
-`scripts/bootstrap-clients.sh` runs from an admin laptop, tars and pushes the repo to each Pi via SSH, runs `./setup.sh init --role client` with per-client overrides, applies latency from `clients.yml`, then runs `sudo ./setup.sh client`. Host list comes from `--hosts CSV` or `--hosts-file`; per-client config overrides come from `clients.yml`.
+`configure.sh` runs on the laptop, collects server/client IPs interactively, and writes `config.yml`. `--copy-keys` runs `ssh-copy-id` for all IPs found in `config.yml`.
+
+`deploy.sh` runs on the laptop, reads `config.yml` via inline Python (no pyyaml needed), SSH-checks all hosts, rsyncs the repo, runs `sudo ./setup.sh server` on the Pi 5, polls for the Spotify OAuth URL, then runs `sudo ./setup.sh client` on each client Pi. Prints a pass/fail summary table.
+
+`scripts/bootstrap-clients.sh` is a power-user tool: tars and pushes the repo to each Pi via SSH, runs `./setup.sh init --role client` with per-client overrides, applies latency from `clients.yml`, then runs `sudo ./setup.sh client`. Host list comes from `--hosts CSV` or `--hosts-file`; per-client config overrides come from `clients.yml`.
 
 ## Snapcast Version
 
