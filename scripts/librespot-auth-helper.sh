@@ -19,6 +19,12 @@ Commands:
 USAGE
 }
 
+callback_listener_details() {
+    local callback_port="$1"
+    ss -ltnp 2>/dev/null \
+        | awk -v port=":${callback_port}" '$4 ~ port"$" {print; found=1} END {exit(found?0:1)}'
+}
+
 latest_oauth_url() {
     journalctl -u librespot --no-pager -n 400 2>/dev/null \
         | grep -Eo 'https://accounts\.spotify\.com/[^ ]+' \
@@ -52,7 +58,7 @@ verify_auth_cache() {
 start_auth() {
     local callback_port="$1"
     local cache_dir="$2"
-    local oauth_url host_ip ssh_user
+    local oauth_url host_ip ssh_user listener_details
 
     echo "Librespot OAuth helper"
     echo "----------------------"
@@ -69,6 +75,7 @@ start_auth() {
     oauth_url="$(latest_oauth_url || true)"
     host_ip="$(detect_host_ip || true)"
     ssh_user="${SUDO_USER:-${USER:-$(id -un 2>/dev/null || echo pi)}}"
+    listener_details="$(callback_listener_details "$callback_port" || true)"
 
     if [[ -z "$oauth_url" ]]; then
         echo "FAILURE: OAuth URL not found in recent librespot logs."
@@ -84,19 +91,32 @@ start_auth() {
     echo "  $oauth_url"
     echo ""
 
+    if [[ -n "$listener_details" ]]; then
+        echo "Callback listener status: READY"
+        echo "$listener_details" | sed 's/^/  /'
+    else
+        echo "Callback listener status: NOT READY"
+        echo "  No process is listening on localhost:${callback_port} yet."
+        echo "  Wait a few seconds and rerun this command, or inspect logs:"
+        echo "    sudo journalctl -u librespot -f"
+    fi
+    echo ""
+
     if [[ -n "${SSH_CONNECTION:-}" ]]; then
         local laptop_cmd
         if [[ -n "$host_ip" ]]; then
-            laptop_cmd="ssh -L ${callback_port}:localhost:${callback_port} ${ssh_user}@${host_ip}"
+            laptop_cmd="ssh -N -L ${callback_port}:127.0.0.1:${callback_port} ${ssh_user}@${host_ip}"
         else
-            laptop_cmd="ssh -L ${callback_port}:localhost:${callback_port} ${ssh_user}@<server-ip>"
+            laptop_cmd="ssh -N -L ${callback_port}:127.0.0.1:${callback_port} ${ssh_user}@<server-ip>"
         fi
 
         echo "Detected SSH session: browser likely runs on your laptop."
-        echo "Copy/paste on your laptop:"
+        echo "Step 1 (laptop): start tunnel in a dedicated terminal and KEEP IT OPEN:"
         echo "  $laptop_cmd"
-        echo "Then open on your laptop:"
+        echo "Step 2 (laptop): open this URL in your browser:"
         echo "  $oauth_url"
+        echo "Step 3 (server): after approving login, verify cache:"
+        echo "  sudo librespot-auth-helper verify-auth-cache ${cache_dir}"
         echo ""
         echo "On-device browser alternative (if this server has a GUI):"
         echo "  xdg-open '$oauth_url'"
@@ -106,7 +126,7 @@ start_auth() {
         if [[ -n "$host_ip" ]]; then
             echo ""
             echo "Laptop tunnel alternative:"
-            echo "  ssh -L ${callback_port}:localhost:${callback_port} ${ssh_user}@${host_ip}"
+            echo "  ssh -N -L ${callback_port}:127.0.0.1:${callback_port} ${ssh_user}@${host_ip}"
             echo "  # Then open: $oauth_url"
         fi
     fi
