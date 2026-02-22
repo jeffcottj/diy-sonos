@@ -274,66 +274,37 @@ deploy_server() {
 # OAuth URL — poll journalctl for the Spotify auth URL
 # ---------------------------------------------------------------------------
 surface_oauth_url() {
-    local cache_dir
-    # Try to read cache_dir from remote config; default to /var/cache/librespot
-    cache_dir="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}" \
-        "cd ${REMOTE_DIR} && python3 -c \"
+    local callback_port cache_dir
+
+    callback_port="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
 import re
 try:
     txt = open('config.yml').read()
-    m = re.search(r'cache_dir:\s*\\\"?([^\\\"\\'#\\n]+)', txt)
+    m = re.search(r'oauth_callback_port:\s*\\"?([^\\"#\n]+)', txt)
+    print(m.group(1).strip() if m else '4000')
+except: print('4000')
+\"" 2>/dev/null || echo "4000")"
+
+    # Try to read cache_dir from remote config; default to /var/cache/librespot
+    cache_dir="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
+import re
+try:
+    txt = open('config.yml').read()
+    m = re.search(r'cache_dir:\s*\\"?([^\\"#\n]+)', txt)
     print(m.group(1).strip() if m else '/var/cache/librespot')
 except: print('/var/cache/librespot')
 \"" 2>/dev/null || echo "/var/cache/librespot")"
 
     echo "$(bold "━━ Spotify Authentication ━━")"
-
-    # Check if credentials already cached
-    local cached
-    cached="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}" \
-        "ls '${cache_dir}' 2>/dev/null | grep -c 'credentials' || true")"
-
-    if [[ "$cached" -gt 0 ]]; then
-        echo "  $(green "✓") Spotify credentials already cached — no action needed."
-        echo ""
-        return
-    fi
-
-    echo "  Polling for Spotify OAuth URL (up to 30s)..."
-    local oauth_url=""
-    local attempts=0
-    while [[ $attempts -lt 10 ]]; do
-        oauth_url="$(ssh "${SSH_OPTS[@]}" "${SSH_USER}@${SERVER_IP}" \
-            "sudo journalctl -u librespot -n 100 --no-pager 2>/dev/null | grep -o 'https://accounts.spotify.com[^ ]*' | tail -1 || true")"
-        if [[ -n "$oauth_url" ]]; then
-            break
-        fi
-        sleep 3
-        (( attempts++ )) || true
-    done
-
     echo ""
-    if [[ -n "$oauth_url" ]]; then
-        echo "  $(bold "$(cyan "Open this URL in your browser to authenticate with Spotify:")")"
-        echo ""
-        echo "    $oauth_url"
-        echo ""
-    else
-        echo "  $(yellow "OAuth URL not found in librespot logs.")"
-        echo "  To authenticate manually, SSH into the server and run:"
-        echo ""
-        echo "    ssh ${SSH_USER}@${SERVER_IP}"
-        echo "    sudo librespot-auth-helper 4000 /var/cache/librespot"
-        echo ""
-        echo "  Or set up an SSH tunnel:"
-        echo "    ssh -L 4000:localhost:4000 ${SSH_USER}@${SERVER_IP}"
-        echo "  Then open http://localhost:4000 in your browser."
-        echo ""
-    fi
-
-    read -r -p "  Press Enter once authenticated (or to skip and continue)..."
+    echo "  Next action (run on server):"
+    echo "    sudo librespot-auth-helper start-auth ${callback_port} ${cache_dir}"
+    echo ""
+    echo "  Verify in scripts/automation:"
+    echo "    sudo librespot-auth-helper verify-auth-cache ${cache_dir}"
     echo ""
 }
+
 
 # ---------------------------------------------------------------------------
 # Deploy clients

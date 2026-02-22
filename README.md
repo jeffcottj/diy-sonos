@@ -271,39 +271,39 @@ Then run the same guided workflow (`./setup.sh init`, `sudo ./setup.sh server|cl
 
 ## Spotify Authentication
 
-On first run, librespot needs to authenticate with Spotify via OAuth. `deploy.sh` polls the librespot journal after server setup and prints the URL for you to open in a browser. Once authenticated, credentials are cached and no further action is needed on subsequent deployments.
-
-### Manual fallback
-
-If `deploy.sh` cannot find the URL (e.g. it appeared before polling started), SSH into the server and run:
+On first run, run one command on the server:
 
 ```bash
-sudo librespot-auth-helper 4000 /var/cache/librespot
+sudo librespot-auth-helper start-auth 4000 /var/cache/librespot
 ```
 
-This command deterministically reports:
-- `cached credentials found` when OAuth credentials already exist in `cache_dir`
-- `auth still pending` when OAuth is not complete yet
+The helper prints explicit terminal outcomes:
+- `SUCCESS: ...` when credentials are already cached
+- `FAILURE: ...` when auth is still pending or the OAuth URL is not yet available
 
-It also prints the latest Spotify OAuth URL extracted from:
+It automatically detects whether you are connected over SSH and prints copy-paste instructions for:
+- laptop browser flow (SSH tunnel command)
+- on-device browser flow (`xdg-open`)
+
+`deploy.sh` always prints this same `start-auth` command as the clear next action after server install.
+
+### Machine-parseable auth-cache verification
+
+For automation/CI scripts, use:
 
 ```bash
-sudo journalctl -u librespot --no-pager -n 400
+sudo librespot-auth-helper verify-auth-cache /var/cache/librespot
 ```
 
-For live logs, you can still run:
+Output is deterministic key/value lines:
+- `AUTH_CACHE_STATUS=cached` (exit code `0`)
+- `AUTH_CACHE_STATUS=pending` (exit code `1`)
+
+You can still inspect service logs directly:
 
 ```bash
 sudo journalctl -u librespot -f
 ```
-
-For headless SSH setups, `setup.sh server` now prints a ready-to-copy tunnel one-liner using the detected host IP and configured callback port (default `4000`), for example:
-
-```bash
-ssh -L 4000:localhost:4000 pi@192.168.1.100
-```
-
-Then open `http://localhost:4000` in your browser and complete the OAuth flow.
 
 ---
 
