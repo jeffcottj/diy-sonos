@@ -4,7 +4,6 @@
 
 set -euo pipefail
 
-SNAPCAST_VER="0.31.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo ""
@@ -61,6 +60,7 @@ systemctl stop raspotify.service 2>/dev/null || true
 echo ""
 echo "--- Installing snapserver ---"
 
+SNAPCAST_VER="$(require_snapcast_version)"
 SNAP_DEB_URL="https://github.com/badaix/snapcast/releases/download/v${SNAPCAST_VER}/snapserver_${SNAPCAST_VER}-1_${ARCH_DEB}_${OS_CODENAME}.deb"
 install_deb "$SNAP_DEB_URL"
 

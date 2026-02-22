@@ -81,7 +81,7 @@ Templates use `{{SPOTIFY__DEVICE_NAME}}` syntax. The Python renderer substitutes
 
 ## Snapcast Version
 
-Both setup scripts use `SNAPCAST_VER="0.31.0"`. To upgrade, change this variable in both `setup-server.sh` and `setup-client.sh` and re-run setup. The `install_deb` function will detect the version mismatch and reinstall.
+Snapcast version is centralized in `scripts/common.sh` as `SNAPCAST_VER_DEFAULT`. Both `setup-server.sh` and `setup-client.sh` call `require_snapcast_version()` to read it and fail fast if it is empty. To upgrade, change `SNAPCAST_VER_DEFAULT` once and re-run setup. The `install_deb` function will detect the version mismatch and reinstall.
 
 ## First-Run OAuth (librespot)
 
