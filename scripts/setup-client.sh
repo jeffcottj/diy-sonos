@@ -4,7 +4,6 @@
 
 set -euo pipefail
 
-SNAPCAST_VER="0.31.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo ""
@@ -33,6 +32,7 @@ pkg_install wget curl ca-certificates alsa-utils
 echo ""
 echo "--- Installing snapclient ---"
 
+SNAPCAST_VER="$(require_snapcast_version)"
 SNAP_DEB_URL="https://github.com/badaix/snapcast/releases/download/v${SNAPCAST_VER}/snapclient_${SNAPCAST_VER}-1_${ARCH_DEB}_${OS_CODENAME}.deb"
 install_deb "$SNAP_DEB_URL"
 

@@ -53,6 +53,8 @@ nano config.yml
 
 Set `server_ip` to the Pi 5's IP address. Adjust `spotify.device_name` if desired.
 
+Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `SNAPCAST_VER_DEFAULT`. Update that value, then re-run setup on server and clients.
+
 ### 3. Set up the server (Pi 5)
 
 ```bash

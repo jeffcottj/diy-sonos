@@ -2,6 +2,9 @@
 # common.sh — shared functions for DIY Sonos setup scripts
 # Sourced by setup.sh; do not execute directly.
 
+# Shared package versions
+SNAPCAST_VER_DEFAULT="0.31.0"
+
 # ---------------------------------------------------------------------------
 # Config parsing
 # ---------------------------------------------------------------------------
@@ -75,6 +78,18 @@ cfg() {
     fi
 
     echo "${!var_name:-$default}"
+}
+
+# require_snapcast_version
+# Prints the configured Snapcast version (single source of truth) and
+# exits with an error if it is empty.
+require_snapcast_version() {
+    local snapcast_ver="${SNAPCAST_VER_DEFAULT:-}"
+    if [[ -z "$snapcast_ver" ]]; then
+        echo "Error: SNAPCAST_VER_DEFAULT is empty in scripts/common.sh. Set it before running setup." >&2
+        exit 1
+    fi
+    echo "$snapcast_ver"
 }
 
 # ---------------------------------------------------------------------------
