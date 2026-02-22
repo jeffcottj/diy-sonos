@@ -343,6 +343,20 @@ deploy_server() {
     ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" \
         "cd ${REMOTE_DIR} && sudo ./setup.sh server"
 
+    echo "  Verifying librespot health on server..."
+    ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" \
+        "set -euo pipefail; \
+         if ! systemctl is-active --quiet librespot; then \
+             echo 'librespot is not active yet; waiting briefly before rechecking...'; \
+             sleep 3; \
+         fi; \
+         if ! systemctl is-active --quiet librespot; then \
+             echo 'Error: librespot is not active after deploy.' >&2; \
+             systemctl status librespot --no-pager -l >&2 || true; \
+             journalctl -u librespot -n 80 --no-pager >&2 || true; \
+             exit 1; \
+         fi"
+
     server_diagnostics
 
     echo ""

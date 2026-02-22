@@ -201,13 +201,33 @@ echo "Cache directory ready: $CACHE_DIR"
 echo ""
 echo "--- Enabling services ---"
 
+check_librespot_health() {
+    if systemctl is-active --quiet librespot; then
+        return 0
+    fi
+
+    echo "librespot is not active yet; waiting briefly before rechecking..."
+    sleep 3
+
+    if systemctl is-active --quiet librespot; then
+        return 0
+    fi
+
+    echo "Error: librespot is not active after setup." >&2
+    systemctl status librespot --no-pager -l >&2 || true
+    journalctl -u librespot -n 80 --no-pager >&2 || true
+    return 1
+}
+
 if [[ $_config_changed -eq 1 ]]; then
     systemd_enable_restart librespot
+    check_librespot_health
     systemd_enable_restart snapserver
 else
     echo "Config unchanged — skipping service restarts"
     systemctl enable librespot snapserver 2>/dev/null || true
     systemctl is-active --quiet librespot || systemctl start librespot
+    check_librespot_health
     systemctl is-active --quiet snapserver || systemctl start snapserver
 fi
 
