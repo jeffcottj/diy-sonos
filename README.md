@@ -361,9 +361,11 @@ The helper prints explicit terminal outcomes:
 - `SUCCESS: ...` when credentials are already cached
 - `FAILURE: ...` when auth is still pending or the OAuth URL is not yet available
 
-It automatically detects whether you are connected over SSH and prints copy-paste instructions for:
-- laptop browser flow (SSH tunnel command)
+It automatically detects whether you are connected over SSH and prints step-by-step instructions for:
+- laptop browser flow (explicit `ssh -N -L ...` tunnel command that must stay open)
 - on-device browser flow (`xdg-open`)
+
+It also prints callback listener status (`READY` / `NOT READY`) so you can quickly tell whether librespot is actually listening on the OAuth callback port.
 
 `deploy.sh` always prints this same `start-auth` command as the clear next action after server install.
 
