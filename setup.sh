@@ -9,9 +9,11 @@ usage() {
     cat >&2 <<USAGE
 Usage:
   sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
+  sudo $0 upgrade [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 init [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   sudo $0 doctor server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
+  $0 version
 
 Modes:
   init       Guided config generator (interactive by default, supports flags)
@@ -19,8 +21,83 @@ Modes:
   server     Run preflight, then install/configure server services
   client     Run preflight, then install/configure client services
   doctor     Report runtime health checks for server/client services
+  upgrade    Re-run idempotent install for configured role while preserving config files
+  version    Print detected DIY Sonos version metadata
 USAGE
     exit 1
+}
+
+print_version_metadata() {
+    local embedded="dev"
+    local release_meta=""
+
+    if [[ -f "$SCRIPT_DIR/.diy-sonos-version" ]]; then
+        release_meta="$(<"$SCRIPT_DIR/.diy-sonos-version")"
+    fi
+
+    if [[ -n "$release_meta" ]]; then
+        echo "DIY Sonos version: ${release_meta}"
+    else
+        echo "DIY Sonos version: ${embedded}"
+    fi
+}
+
+run_install_mode() {
+    local mode="$1"
+
+    run_preflight_mode "$mode"
+    require_root
+
+    # Ensure python3-yaml is available for config parsing
+    if ! python3 -c "import yaml" 2>/dev/null; then
+        echo "Installing python3-yaml..."
+        apt-get install -y python3-yaml
+    fi
+
+    if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+        echo "Error: default config.yml not found at $DEFAULT_CONFIG" >&2
+        exit 1
+    fi
+
+    parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
+
+    # CLI flags override any config file values
+    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
+
+    case "$mode" in
+        server)
+            source "$SCRIPT_DIR/scripts/setup-server.sh"
+            ;;
+        client)
+            source "$SCRIPT_DIR/scripts/setup-client.sh"
+            ;;
+    esac
+}
+
+run_upgrade_mode() {
+    local role="${ROLE:-}"
+
+    if [[ -z "$role" ]]; then
+        if [[ ! -f "$DEFAULT_CONFIG" ]]; then
+            echo "Error: default config.yml not found at $DEFAULT_CONFIG" >&2
+            exit 1
+        fi
+        if ! python3 -c "import yaml" 2>/dev/null; then
+            echo "Error: python3-yaml is required for upgrade mode. Install with: sudo apt-get install -y python3-yaml" >&2
+            exit 1
+        fi
+        parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
+        role="$(cfg profile role client)"
+    fi
+
+    role="${role,,}"
+    if [[ "$role" != "server" && "$role" != "client" ]]; then
+        echo "Error: upgrade role must be 'server' or 'client' (or set profile.role in config)" >&2
+        exit 1
+    fi
+
+    echo "Upgrade mode detected role: $role"
+    run_install_mode "$role"
 }
 
 require_root() {
@@ -457,34 +534,14 @@ case "$MODE" in
     doctor)
         run_doctor_mode "$ROLE"
         ;;
+    version)
+        print_version_metadata
+        ;;
     server|client)
-        run_preflight_mode "$MODE"
-        require_root
-
-        # Ensure python3-yaml is available for config parsing
-        if ! python3 -c "import yaml" 2>/dev/null; then
-            echo "Installing python3-yaml..."
-            apt-get install -y python3-yaml
-        fi
-
-        if [[ ! -f "$DEFAULT_CONFIG" ]]; then
-            echo "Error: default config.yml not found at $DEFAULT_CONFIG" >&2
-            exit 1
-        fi
-
-        parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
-
-        # CLI flags override any config file values
-        apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
-
-        case "$MODE" in
-            server)
-                source "$SCRIPT_DIR/scripts/setup-server.sh"
-                ;;
-            client)
-                source "$SCRIPT_DIR/scripts/setup-client.sh"
-                ;;
-        esac
+        run_install_mode "$MODE"
+        ;;
+    upgrade)
+        run_upgrade_mode
         ;;
     *)
         usage
