@@ -45,6 +45,45 @@ PYEOF
     eval "$output"
 }
 
+
+# parse_config_files <base_yaml> [generated_yaml]
+# Precedence (lowest -> highest):
+#   1) base_yaml (usually config.yml)
+#   2) generated_yaml (usually .diy-sonos.generated.yml), if present
+parse_config_files() {
+    local base_yaml="$1"
+    local generated_yaml="${2:-}"
+
+    parse_config "$base_yaml"
+
+    if [[ -n "$generated_yaml" && -f "$generated_yaml" ]]; then
+        echo "Using generated config override: $generated_yaml"
+        parse_config "$generated_yaml"
+    else
+        echo "No generated config override found; using base config only"
+    fi
+}
+
+# apply_cli_config_overrides <server_ip> <device_name> <audio_device>
+# Highest precedence configuration layer.
+apply_cli_config_overrides() {
+    local server_ip="$1"
+    local device_name="$2"
+    local audio_device="$3"
+
+    if [[ -n "$server_ip" ]]; then
+        export SERVER_IP="$server_ip"
+    fi
+
+    if [[ -n "$device_name" ]]; then
+        export SPOTIFY__DEVICE_NAME="$device_name"
+    fi
+
+    if [[ -n "$audio_device" ]]; then
+        export SNAPCLIENT__AUDIO_DEVICE="$audio_device"
+    fi
+}
+
 # cfg <section> <key> [default]
 # cfg <key> [default]
 # Read a config variable by section and key (mirrors YAML nesting),
