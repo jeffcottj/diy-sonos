@@ -521,6 +521,7 @@ run_doctor_mode() {
     echo ""
     if [[ "$role" == "server" ]]; then
         echo "- Service checks"
+        doctor_check_avahi_service || failed=1
         doctor_check_librespot_service || failed=1
         doctor_check_snapserver_service || failed=1
 

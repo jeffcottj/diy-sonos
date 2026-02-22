@@ -102,3 +102,28 @@ nc -vz <server_ip> 1704
 ```
 
 If it fails, verify server is up, `snapserver` is active, and no firewall blocks TCP/1704.
+
+## Device not visible in Spotify
+
+### Symptoms
+
+- Spotify Connect app does not show your DIY Sonos device name.
+- Server appears healthy otherwise, but discovery is intermittent or absent.
+
+### Why it matters
+
+Spotify Connect discovery on local networks depends on mDNS/zeroconf advertisements. If `avahi-daemon` is not active, the device may not be discoverable by Spotify clients.
+
+### Suggested command
+
+```bash
+sudo systemctl status avahi-daemon --no-pager
+```
+
+If inactive, fix as **must-fix** before retrying Spotify discovery:
+
+```bash
+sudo systemctl enable avahi-daemon
+sudo systemctl restart avahi-daemon
+sudo journalctl -u avahi-daemon -n 50 --no-pager
+```
