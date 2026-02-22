@@ -38,11 +38,18 @@ All Pis must be on the same local network.
 
 ## Quick Start
 
-### 1. Clone the repo on each Pi
+### 1. Install from release (recommended)
 
 ```bash
-git clone https://github.com/yourusername/diy-sonos.git
-cd diy-sonos
+curl -fsSL https://raw.githubusercontent.com/yourusername/diy-sonos/main/install.sh | bash
+```
+
+This installer resolves the latest tagged release, downloads the tarball, preserves existing local config files (`config.yml`, `.diy-sonos.generated.yml`, `clients.yml`) during upgrades, writes release metadata to `.diy-sonos-version`, and then offers to run the guided setup wizard.
+
+To pin a specific release tag or re-install safely:
+
+```bash
+./install.sh --tag v0.1.0
 ```
 
 ### 2. Run the guided setup config wizard (recommended)
@@ -69,6 +76,22 @@ Config precedence is:
 ```bash
 sudo ./setup.sh server
 ```
+
+### Upgrade an existing install
+
+Use upgrade mode to re-run idempotent package/service setup for the configured role while preserving your existing config files:
+
+```bash
+sudo ./setup.sh upgrade
+```
+
+You can override role detection explicitly:
+
+```bash
+sudo ./setup.sh upgrade --role server
+sudo ./setup.sh upgrade --role client
+```
+
 
 ### 3.5 Run fast preflight checks (optional but recommended)
 
@@ -128,6 +151,19 @@ Open Spotify, select your device, and music plays on all speakers in sync.
 If you prefer to hand-edit config, update `config.yml` and/or `.diy-sonos.generated.yml` directly.
 
 Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `SNAPCAST_VER_DEFAULT`. Update that value, then re-run setup on server and clients.
+
+---
+
+## Contributor / Developer Path (clone from source)
+
+If you are developing or contributing, clone from source instead of using the release installer:
+
+```bash
+git clone https://github.com/yourusername/diy-sonos.git
+cd diy-sonos
+```
+
+Then run the same guided workflow (`./setup.sh init`, `sudo ./setup.sh server|client`).
 
 ---
 
@@ -276,8 +312,9 @@ Set `snapclient.audio_device` to an explicit `hw:N,0` value and re-run client se
 All setup scripts are idempotent — safe to re-run after changing `config.yml`:
 
 ```bash
-sudo ./setup.sh server   # re-renders configs and restarts services
-sudo ./setup.sh client   # re-renders client service and restarts
+sudo ./setup.sh server    # re-renders configs and restarts services
+sudo ./setup.sh client    # re-renders client service and restarts
+sudo ./setup.sh upgrade   # detects role and re-runs install safely
 ```
 
 Packages are only installed if not already present. Services are restarted only after configuration is updated.
