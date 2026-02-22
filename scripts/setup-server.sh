@@ -112,6 +112,13 @@ render_template \
 echo ""
 echo "--- Rendering systemd service units ---"
 
+NORMALISE="$(cfg spotify normalise true)"
+if [[ "${NORMALISE,,}" == "true" ]]; then
+    export SPOTIFY__NORMALISE_FLAG="--enable-volume-normalisation"
+else
+    export SPOTIFY__NORMALISE_FLAG=""
+fi
+
 render_template \
     "$SCRIPT_DIR/templates/librespot.service.tmpl" \
     "/etc/systemd/system/librespot.service"

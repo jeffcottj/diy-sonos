@@ -33,6 +33,8 @@ for k, v in flatten(data).items():
     shell_name = k.upper().replace("-", "_")
     if v is None:
         v = ""
+    elif isinstance(v, bool):
+        v = "true" if v else "false"
     # Emit export statements
     print(f"export {shell_name}={repr(str(v))}")
 PYEOF

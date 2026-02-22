@@ -14,7 +14,7 @@ ExecStart=/usr/bin/librespot \
     --device {{SNAPSERVER__FIFO_PATH}} \
     --format S16 \
     --initial-volume {{SPOTIFY__INITIAL_VOLUME}} \
-    --enable-volume-normalisation \
+    {{SPOTIFY__NORMALISE_FLAG}} \
     --cache {{SPOTIFY__CACHE_DIR}} \
     --disable-audio-cache \
     --enable-oauth
