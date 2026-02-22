@@ -228,9 +228,10 @@ choose_profile_preset() {
     echo "Choose tuning preset:"
     echo "  1) Basic home setup (fastest path, recommended for first install)"
     echo "  2) Advanced tuning"
+    echo "  Enter 1 or 2, or press Enter to accept the default (1)."
     while true; do
         local choice
-        read -r -p "Preset [${default_choice}]: " choice
+        read -r -p "Preset number [${default_choice}]: " choice
         choice="${choice:-$default_choice}"
         case "$choice" in
             1)
