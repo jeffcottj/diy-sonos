@@ -52,11 +52,34 @@ fi
 if [[ ! -f "$RASPOTIFY_LIST" ]]; then
     echo "deb [signed-by=$RASPOTIFY_GPG] https://dtcooper.github.io/raspotify raspotify main" \
         > "$RASPOTIFY_LIST"
-    apt-get update -qq
     echo "Added raspotify apt source"
 fi
 
-pkg_install raspotify
+apt-get update -qq
+
+RASPOTIFY_TARGET_VERSION="$(apt-cache policy raspotify | awk '/Candidate:/ {print $2}')"
+if [[ -z "$RASPOTIFY_TARGET_VERSION" || "$RASPOTIFY_TARGET_VERSION" == "(none)" ]]; then
+    echo "Error: unable to determine raspotify candidate version" >&2
+    exit 1
+fi
+
+RASPOTIFY_INSTALLED_VERSION="$(dpkg-query -W -f='${Version}' raspotify 2>/dev/null || true)"
+if [[ -z "$RASPOTIFY_INSTALLED_VERSION" ]]; then
+    RASPOTIFY_INSTALLED_VERSION="(not installed)"
+fi
+
+echo "raspotify installed version: $RASPOTIFY_INSTALLED_VERSION"
+echo "raspotify target version:    $RASPOTIFY_TARGET_VERSION"
+
+if [[ "$RASPOTIFY_INSTALLED_VERSION" == "(not installed)" ]]; then
+    echo "Installing raspotify $RASPOTIFY_TARGET_VERSION"
+    apt-get install -y raspotify
+elif [[ "$RASPOTIFY_INSTALLED_VERSION" != "$RASPOTIFY_TARGET_VERSION" ]]; then
+    echo "Upgrading raspotify to $RASPOTIFY_TARGET_VERSION"
+    apt-get install -y --only-upgrade raspotify
+else
+    echo "raspotify already at target version"
+fi
 
 # Mask raspotify's own service — we manage librespot with our own unit
 systemctl mask raspotify.service 2>/dev/null || true
