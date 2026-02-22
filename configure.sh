@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # configure.sh — laptop-side wizard for DIY Sonos
 # Collects server/client IPs and writes config.yml.
-# Run with --copy-keys to set up SSH key auth on all Pis.
+# Run with --copy-keys to set up SSH key auth on all target devices.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -116,7 +116,7 @@ write_config_yml() {
     cat > "$CONFIG_FILE" <<YAML
 # ── Network ──────────────────────────────────────────────────────────────
 ssh_user: "${ssh_user}"           # SSH username used by deploy.sh
-server_ip: "${server_ip}"         # IP of the Pi 5
+server_ip: "${server_ip}"         # IP of the server device
 
 clients:                          # Speaker client IPs; used by deploy.sh
 ${clients_yaml}
@@ -165,7 +165,7 @@ run_copy_keys() {
     [[ -n "$server_ip" ]] && all_ips+=("$server_ip")
     all_ips+=("${client_ips[@]+"${client_ips[@]}"}")
 
-    echo "$(bold "Setting up SSH keys for all Pis...")"
+    echo "$(bold "Setting up SSH keys for all devices...")"
     echo "SSH user: $ssh_user"
     echo ""
 
@@ -205,7 +205,7 @@ run_wizard() {
     # Server IP
     local server_ip=""
     while true; do
-        server_ip="$(prompt_with_default "Pi 5 server IP" "${EXISTING_SERVER_IP:-}")"
+        server_ip="$(prompt_with_default "Server device IP" "${EXISTING_SERVER_IP:-}")"
         if validate_ipv4 "$server_ip"; then
             break
         fi
@@ -214,11 +214,11 @@ run_wizard() {
 
     # SSH user
     local ssh_user
-    ssh_user="$(prompt_with_default "SSH username on each Pi" "${EXISTING_SSH_USER:-pi}")"
+    ssh_user="$(prompt_with_default "SSH username on each device" "${EXISTING_SSH_USER:-pi}")"
 
     # Client IPs
     echo ""
-    echo "Enter client Pi IPs one at a time. Press Enter with no input when done."
+    echo "Enter client device IPs one at a time. Press Enter with no input when done."
     if [[ ${#EXISTING_CLIENT_IPS[@]} -gt 0 ]]; then
         echo "(Existing clients: ${EXISTING_CLIENT_IPS[*]})"
         echo "Leave blank and press Enter to keep existing list, or enter IPs to replace it."
@@ -288,7 +288,7 @@ case "${1:-}" in
         cat <<USAGE
 Usage:
   ./configure.sh              Interactive wizard — writes config.yml
-  ./configure.sh --copy-keys  Copy SSH keys to all Pis in config.yml
+  ./configure.sh --copy-keys  Copy SSH keys to all target devices in config.yml
   ./configure.sh --help       Show this help
 USAGE
         ;;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# setup-server.sh — install and configure snapserver + librespot on Pi 5
+# setup-server.sh — install and configure snapserver + librespot on server device
 # Sourced by setup.sh after common.sh is loaded and config is parsed.
 
 set -euo pipefail
@@ -180,7 +180,7 @@ echo ""
 echo "  2. Open Spotify on any device and look for:"
 echo "     '$(cfg spotify device_name)' in the device list."
 echo ""
-echo "  3. Run setup on each Pi Zero client:"
+echo "  3. Run setup on each client device:"
 echo "     sudo ./setup.sh client"
 echo ""
 echo "  4. Deterministic auth status check:"

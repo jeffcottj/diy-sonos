@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy.sh — laptop-side orchestrator for DIY Sonos
-# Rsyncs this repo to all Pis, runs setup, surfaces OAuth URL, prints summary.
+# Rsyncs this repo to all target devices, runs setup, surfaces OAuth URL, prints summary.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
