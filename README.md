@@ -108,7 +108,7 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | `server_ip` | `192.168.1.100` | IP of the Pi 5; used by clients to connect |
 | `spotify.device_name` | `DIY Sonos` | Name shown in the Spotify device list |
 | `spotify.bitrate` | `320` | Spotify stream bitrate: 96, 160, or 320 kbps |
-| `spotify.normalise` | `true` | Volume normalisation |
+| `spotify.normalise` | `true` | Enables librespot volume normalisation (`--enable-volume-normalisation` is included only when `true`) |
 | `spotify.initial_volume` | `75` | Initial volume (0–100) |
 | `spotify.cache_dir` | `/var/cache/librespot` | OAuth credential and metadata cache |
 | `spotify.device_type` | `speaker` | Icon shown in Spotify: `speaker`, `avr`, `tv`, etc. |
