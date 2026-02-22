@@ -139,6 +139,42 @@ run_connectivity_check() {
     echo ""
 }
 
+parse_spotify_auth_settings() {
+    local parsed
+    parsed="$(python3 - "$CONFIG_FILE" <<'PYEOF'
+import re
+import sys
+
+callback_port = "4000"
+cache_dir = "/var/cache/librespot"
+
+for line in open(sys.argv[1], encoding="utf-8"):
+    stripped = line.split("#", 1)[0].strip()
+
+    m = re.match(r'^oauth_callback_port:\s*"?([^"#\s]+)"?', stripped)
+    if m:
+        callback_port = m.group(1)
+
+    m = re.match(r'^cache_dir:\s*"?([^"#\s]+)"?', stripped)
+    if m:
+        cache_dir = m.group(1)
+
+print(f"OAUTH_CALLBACK_PORT={callback_port}")
+print(f"SPOTIFY_CACHE_DIR={cache_dir}")
+PYEOF
+)"
+
+    OAUTH_CALLBACK_PORT="4000"
+    SPOTIFY_CACHE_DIR="/var/cache/librespot"
+
+    while IFS='=' read -r key val; do
+        case "$key" in
+            OAUTH_CALLBACK_PORT) OAUTH_CALLBACK_PORT="$val" ;;
+            SPOTIFY_CACHE_DIR) SPOTIFY_CACHE_DIR="$val" ;;
+        esac
+    done <<< "$parsed"
+}
+
 echo ""
 echo "$(bold 'DIY Sonos — Quick Start Wizard')"
 echo ""
@@ -169,10 +205,24 @@ echo "$(bold '5) Deploying DIY Sonos')"
 bash "$SCRIPT_DIR/deploy.sh"
 echo ""
 
-echo "$(bold '6) What to do in Spotify')"
-echo "  • Open Spotify on your phone/computer."
-echo "  • Tap the Connect/Devices icon."
-echo "  • Select the speaker device name you configured in step 2."
-echo "  • Start playback — audio should play across all configured rooms in sync."
-echo ""
-echo "$(green 'Done.')"
+parse_spotify_auth_settings
+
+echo "$(bold '6) Spotify authentication check')"
+echo "  Verifying server auth cache status..."
+
+if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "${SERVER_SSH_USER}@${SERVER_IP}" \
+    "sudo librespot-auth-helper verify-auth-cache ${SPOTIFY_CACHE_DIR}" >/dev/null 2>&1; then
+    echo "  $(green 'Spotify auth cache detected.')"
+    echo "  Open Spotify and select your configured speaker device to start playback."
+    echo ""
+    echo "$(green 'Done: deployment complete and Spotify-ready.')"
+else
+    echo "  $(yellow 'Spotify auth cache is still pending.')"
+    echo "  Deployment is complete, but Spotify playback is blocked until auth finishes."
+    echo ""
+    echo "  Run these commands on the server:"
+    echo "    sudo librespot-auth-helper start-auth ${OAUTH_CALLBACK_PORT} ${SPOTIFY_CACHE_DIR}"
+    echo "    sudo librespot-auth-helper verify-auth-cache ${SPOTIFY_CACHE_DIR}"
+    echo ""
+    echo "$(yellow 'Done: deployment complete (not Spotify-ready yet).')"
+fi
