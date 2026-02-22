@@ -290,6 +290,8 @@ sudo ./setup.sh server
 sudo ./setup.sh client
 ```
 
+For a single host acting as both server and player, set `profile.role: "server+client"` and run both modes on that host (`sudo ./setup.sh server` then `sudo ./setup.sh client`).
+
 The guided init wizard (also runs on-device):
 
 ```bash
@@ -401,7 +403,7 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | `spotify.device_name` | `DIY Sonos` | Name shown in the Spotify device list |
 | `spotify.bitrate` | `320` | Spotify stream bitrate: 96, 160, or 320 kbps |
 | `spotify.normalise` | `true` | Enables librespot volume normalisation (`--enable-volume-normalisation` is included only when `true`) |
-| `spotify.initial_volume` | `75` | Initial volume (0–100) |
+| `spotify.initial_volume` | `90` | Initial volume (0–100) |
 | `spotify.cache_dir` | `/var/cache/librespot` | OAuth credential and metadata cache |
 | `spotify.oauth_callback_port` | `4000` | Local OAuth callback port used by librespot and SSH tunnel helper |
 | `spotify.device_type` | `speaker` | Icon shown in Spotify: `speaker`, `avr`, `tv`, etc. |

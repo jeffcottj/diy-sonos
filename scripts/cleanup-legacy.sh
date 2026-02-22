@@ -60,9 +60,17 @@ cleanup_legacy_for_role() {
 
     local conflicting_units=()
     if [[ "$role" == "server" ]]; then
-        conflicting_units=(snapclient.service raspotify.service)
+        if [[ "${DIY_SONOS_COMBO_ROLE:-0}" -eq 1 ]]; then
+            conflicting_units=(raspotify.service)
+        else
+            conflicting_units=(snapclient.service raspotify.service)
+        fi
     else
-        conflicting_units=(librespot.service snapserver.service raspotify.service)
+        if [[ "${DIY_SONOS_COMBO_ROLE:-0}" -eq 1 ]]; then
+            conflicting_units=(raspotify.service)
+        else
+            conflicting_units=(librespot.service snapserver.service raspotify.service)
+        fi
     fi
 
     echo "Applying role conflict policy (${role})..."

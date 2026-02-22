@@ -11,7 +11,7 @@ spotify:
   device_name: "DIY Sonos"        # Name shown in Spotify app
   bitrate: 320                    # 96 | 160 | 320 kbps
   normalise: true                 # Volume normalisation
-  initial_volume: 75              # 0-100
+  initial_volume: 90              # 0-100
   cache_dir: "/var/cache/librespot"  # OAuth credential cache
   oauth_callback_port: 4000       # Local callback port used during OAuth
   device_type: "speaker"          # Icon shown in Spotify app

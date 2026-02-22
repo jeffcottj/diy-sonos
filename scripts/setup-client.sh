@@ -7,6 +7,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
 
+set_client_output_volume_max() {
+    if ! command -v amixer >/dev/null 2>&1; then
+        echo "amixer not found; skipping ALSA mixer volume tuning"
+        return 0
+    fi
+
+    local mixer
+    mixer="$(amixer -D "$RESOLVED_AUDIO_DEVICE" scontrols 2>/dev/null | awk -F"'" 'NR==1{print $2}')"
+
+    if [[ -n "$mixer" ]]; then
+        if amixer -D "$RESOLVED_AUDIO_DEVICE" sset "$mixer" 100% unmute >/dev/null 2>&1; then
+            echo "Set ALSA mixer '$mixer' to 100% on $RESOLVED_AUDIO_DEVICE"
+            return 0
+        fi
+    fi
+
+    if amixer -D "$RESOLVED_AUDIO_DEVICE" sset Master 100% unmute >/dev/null 2>&1; then
+        echo "Set ALSA mixer 'Master' to 100% on $RESOLVED_AUDIO_DEVICE"
+        return 0
+    fi
+
+    echo "Warning: could not set ALSA mixer level on $RESOLVED_AUDIO_DEVICE; tune with alsamixer manually" >&2
+}
+
+
 echo ""
 echo "=========================================="
 echo " DIY Sonos — Client Setup"
@@ -53,6 +78,8 @@ echo "--- Resolving audio device ---"
 
 resolve_audio_device "$(cfg snapclient audio_device)"
 echo "Audio device: $RESOLVED_AUDIO_DEVICE"
+
+set_client_output_volume_max
 
 # ---------------------------------------------------------------------------
 # 5. Render systemd service unit

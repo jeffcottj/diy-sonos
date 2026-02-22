@@ -9,9 +9,9 @@ usage() {
     cat >&2 <<USAGE
 Usage:
   sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
-  sudo $0 upgrade [--role server|client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
+  sudo $0 upgrade [--role server|client|server+client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
   $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--advisory]
-  $0 init [--preset basic|advanced] [--role server|client] [--server-ip IP] [--client-ips IP[,IP...]] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
+  $0 init [--preset basic|advanced] [--role server|client|server+client] [--server-ip IP] [--client-ips IP[,IP...]] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
   sudo $0 doctor server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
   $0 version
 
@@ -81,6 +81,11 @@ run_install_mode() {
     # CLI flags override any config file values
     apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
 
+    export DIY_SONOS_COMBO_ROLE=0
+    if [[ "$(cfg profile role client)" == "server+client" ]]; then
+        export DIY_SONOS_COMBO_ROLE=1
+    fi
+
     case "$mode" in
         server)
             source "$SCRIPT_DIR/scripts/setup-server.sh"
@@ -108,13 +113,18 @@ run_upgrade_mode() {
     fi
 
     role="${role,,}"
-    if [[ "$role" != "server" && "$role" != "client" ]]; then
-        echo "Error: upgrade role must be 'server' or 'client' (or set profile.role in config)" >&2
+    if [[ "$role" != "server" && "$role" != "client" && "$role" != "server+client" ]]; then
+        echo "Error: upgrade role must be 'server', 'client', or 'server+client' (or set profile.role in config)" >&2
         exit 1
     fi
 
     echo "Upgrade mode detected role: $role"
-    run_install_mode "$role"
+    if [[ "$role" == "server+client" ]]; then
+        run_install_mode server
+        run_install_mode client
+    else
+        run_install_mode "$role"
+    fi
 }
 
 require_root() {
@@ -212,12 +222,12 @@ run_init_mode() {
 
     if [[ -z "$role" && "$preset" == "advanced" ]]; then
         while true; do
-            role="$(prompt_with_default "Role (server/client)" "client")"
+            role="$(prompt_with_default "Role (server/client/server+client)" "client")"
             role="${role,,}"
-            if [[ "$role" == "server" || "$role" == "client" ]]; then
+            if [[ "$role" == "server" || "$role" == "client" || "$role" == "server+client" ]]; then
                 break
             fi
-            echo "Please enter 'server' or 'client'."
+            echo "Please enter 'server', 'client', or 'server+client'."
         done
     fi
 
@@ -265,9 +275,9 @@ run_init_mode() {
 
     if [[ -z "$initial_volume" ]]; then
         if [[ "$preset" == "basic" ]]; then
-            initial_volume="75"
+            initial_volume="90"
         else
-            initial_volume="$(prompt_with_default "Initial Spotify volume (0-100)" "75")"
+            initial_volume="$(prompt_with_default "Initial Spotify volume (0-100)" "90")"
         fi
     fi
 
@@ -293,6 +303,9 @@ run_init_mode() {
     echo "Next steps:"
     if [[ "$role" == "server" ]]; then
         echo "  sudo ./setup.sh server"
+    elif [[ "$role" == "server+client" ]]; then
+        echo "  sudo ./setup.sh server"
+        echo "  sudo ./setup.sh client"
     else
         echo "  sudo ./setup.sh client"
     fi
