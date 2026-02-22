@@ -55,7 +55,7 @@ This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connect
 ### 1. Install from release (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yourusername/diy-sonos/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jeffcottj/diy-sonos/main/install.sh | bash -s -- --install-dir "$HOME/diy-sonos"
 ```
 
 This installer resolves the latest tagged release, downloads the tarball, preserves existing local config files (`config.yml`, `.diy-sonos.generated.yml`, `clients.yml`) during upgrades, writes release metadata to `.diy-sonos-version`, and then offers to run the guided setup wizard.
@@ -64,6 +64,28 @@ To pin a specific release tag or re-install safely:
 
 ```bash
 ./install.sh --tag v0.1.0
+```
+
+### If this command fails
+
+Use one of these fallback paths:
+
+1. Clone and run init:
+
+```bash
+git clone https://github.com/jeffcottj/diy-sonos.git
+cd diy-sonos
+./setup.sh init
+```
+
+2. Download a release tarball manually and run init:
+
+```bash
+TAG="v0.1.0"
+curl -fL "https://github.com/jeffcottj/diy-sonos/archive/refs/tags/${TAG}.tar.gz" -o diy-sonos.tar.gz
+mkdir -p diy-sonos && tar -xzf diy-sonos.tar.gz --strip-components=1 -C diy-sonos
+cd diy-sonos
+./setup.sh init
 ```
 
 ### 2. Configure from your laptop
@@ -221,7 +243,7 @@ Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `
 If you are developing or contributing, clone from source instead of using the release installer:
 
 ```bash
-git clone https://github.com/yourusername/diy-sonos.git
+git clone https://github.com/jeffcottj/diy-sonos.git
 cd diy-sonos
 ```
 

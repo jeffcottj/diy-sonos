@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_SLUG="${DIY_SONOS_REPO:-yourusername/diy-sonos}"
+REPO_SLUG="${DIY_SONOS_REPO:-jeffcottj/diy-sonos}"
 INSTALL_DIR_DEFAULT="${HOME}/diy-sonos"
 TAG="${DIY_SONOS_TAG:-latest}"
 INSTALL_DIR="$INSTALL_DIR_DEFAULT"
@@ -18,7 +18,7 @@ Usage:
 Options:
   --tag          Release tag to install (default: latest)
   --install-dir  Destination directory (default: ~/diy-sonos)
-  --repo         GitHub repository slug (default: yourusername/diy-sonos)
+  --repo         GitHub repository slug (default: jeffcottj/diy-sonos)
   --skip-setup   Download/extract only; do not run guided setup prompt
 USAGE
 }
