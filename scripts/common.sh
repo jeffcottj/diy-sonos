@@ -394,7 +394,13 @@ detect_alsa_usb_device() {
         ')
         if [[ -n "$aplay_num" ]]; then
             card_name=$(aplay -l 2>/dev/null | awk -v n="$aplay_num" '
-                $0 ~ "^card "n":" { match($0,/^card [0-9]+: ([^ []+)/,a); print a[1]; exit }
+                $0 ~ "^card "n":" {
+                    line=$0
+                    sub(/^card [0-9]+: /, "", line)
+                    sub(/ .*/, "", line)
+                    print line
+                    exit
+                }
             ')
             [[ -z "$card_name" ]] && card_name="$aplay_num"
         fi
