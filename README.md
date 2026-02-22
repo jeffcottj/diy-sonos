@@ -70,6 +70,16 @@ Config precedence is:
 sudo ./setup.sh server
 ```
 
+### 3.5 Run fast preflight checks (optional but recommended)
+
+```bash
+./setup.sh preflight server
+./setup.sh preflight client
+```
+
+Preflight validates required binaries (`apt-get`, `systemctl`), network reachability, supported OS/arch, and key config values before install. `setup.sh server|client` runs this automatically and aborts early if checks fail.
+
+
 ### 4. Authenticate with Spotify (first run only)
 
 See [First-Run Spotify Authentication](#first-run-spotify-authentication) below.
