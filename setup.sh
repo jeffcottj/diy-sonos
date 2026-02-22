@@ -339,7 +339,7 @@ check_os_arch_support() {
     detect_os_codename
     detect_arch
 
-    local supported_codenames=(bookworm bullseye)
+    local supported_codenames=(trixie bookworm bullseye)
     local supported_arches=(arm64 armhf)
     local codename_ok=1
     local arch_ok=1
