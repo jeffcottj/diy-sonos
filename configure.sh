@@ -139,13 +139,16 @@ read_existing_config() {
     EXISTING_DEVICE_NAME=""
     EXISTING_SERVER_IP=""
     EXISTING_SSH_USER=""
+    EXISTING_SERVER_SSH_USER=""
     EXISTING_CLIENT_IPS=()
+    declare -gA EXISTING_CLIENT_SSH_USERS=()
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
         return
     fi
 
     local in_clients=0
+    local current_client_ip=""
     while IFS= read -r line; do
         # Strip inline comments
         local stripped="${line%%#*}"
@@ -153,8 +156,15 @@ read_existing_config() {
         # Top-level keys
         if [[ "$stripped" =~ ^ssh_user:[[:space:]]*\"?([^\"[:space:]]+)\"? ]]; then
             EXISTING_SSH_USER="${BASH_REMATCH[1]}"
+            if [[ -z "$EXISTING_SERVER_SSH_USER" ]]; then
+                EXISTING_SERVER_SSH_USER="${BASH_REMATCH[1]}"
+            fi
         elif [[ "$stripped" =~ ^server_ip:[[:space:]]*\"?([^\"[:space:]]+)\"? ]]; then
             EXISTING_SERVER_IP="${BASH_REMATCH[1]}"
+        elif [[ "$stripped" =~ ^server:[[:space:]]*$ ]]; then
+            in_clients=0
+        elif [[ "$stripped" =~ ^[[:space:]]+ssh_user:[[:space:]]*\"?([^\"[:space:]]+)\"? ]] && [[ -z "$current_client_ip" ]]; then
+            EXISTING_SERVER_SSH_USER="${BASH_REMATCH[1]}"
         fi
 
         # Spotify device_name (indented)
@@ -172,11 +182,28 @@ read_existing_config() {
         if (( in_clients )); then
             if [[ "$stripped" =~ ^[[:alpha:]] && ! "$stripped" =~ ^clients: ]]; then
                 in_clients=0
+                current_client_ip=""
             elif [[ "$stripped" =~ ^[[:space:]]*-[[:space:]]*ip:[[:space:]]*\"?([0-9.]+)\"? ]]; then
                 EXISTING_CLIENT_IPS+=("${BASH_REMATCH[1]}")
+                current_client_ip="${BASH_REMATCH[1]}"
+            elif [[ -n "$current_client_ip" ]] && [[ "$stripped" =~ ^[[:space:]]+ssh_user:[[:space:]]*\"?([^\"[:space:]]+)\"? ]]; then
+                EXISTING_CLIENT_SSH_USERS["$current_client_ip"]="${BASH_REMATCH[1]}"
             fi
         fi
     done < "$CONFIG_FILE"
+
+    if [[ -z "$EXISTING_SERVER_SSH_USER" ]]; then
+        EXISTING_SERVER_SSH_USER="${EXISTING_SSH_USER:-pi}"
+    fi
+}
+
+ssh_user_for_host() {
+    local host_ip="$1"
+    if [[ "$host_ip" == "$EXISTING_SERVER_IP" ]]; then
+        echo "${EXISTING_SERVER_SSH_USER:-${EXISTING_SSH_USER:-pi}}"
+        return
+    fi
+    echo "${EXISTING_CLIENT_SSH_USERS[$host_ip]:-${EXISTING_SSH_USER:-pi}}"
 }
 
 # ---------------------------------------------------------------------------
@@ -225,10 +252,10 @@ prompt_ipv4_with_default() {
 
 choose_profile_preset() {
     local default_choice="1"
-    echo "Choose tuning preset:"
-    echo "  1) Basic home setup (fastest path, recommended for first install)"
-    echo "  2) Advanced tuning"
-    echo "  Enter 1 or 2, or press Enter to accept the default (1)."
+    echo "Choose speaker tuning preset for this system:" >&2
+    echo "  1) Basic home setup (recommended first install)" >&2
+    echo "  2) Advanced tuning (higher bitrate/lower buffer)" >&2
+    echo "  Enter 1 or 2, or press Enter to accept the default (1)." >&2
     while true; do
         local choice
         read -r -p "Preset number [${default_choice}]: " choice
@@ -254,11 +281,12 @@ collect_client_ips() {
     local -a collected=()
     local first_entry=1
 
-    echo ""
-    echo "Enter client device IPs one at a time. Press Enter with no input when done."
+    echo "" >&2
+    echo "Add each speaker client device." >&2
+    echo "Enter client device IPs one at a time. Press Enter with no input when done." >&2
     if [[ ${#_existing_ref[@]} -gt 0 ]]; then
-        echo "(Existing clients: ${_existing_ref[*]})"
-        echo "Leave blank and press Enter to keep existing list, or enter IPs to replace it."
+        echo "(Existing clients: ${_existing_ref[*]})" >&2
+        echo "Leave blank and press Enter to keep existing list, or enter IPs to replace it." >&2
     fi
 
     while true; do
@@ -270,7 +298,7 @@ collect_client_ips() {
                 collected=("${_existing_ref[@]}")
                 break
             elif [[ ${#collected[@]} -eq 0 ]]; then
-                echo "  At least one client IP is required."
+                echo "  At least one client IP is required." >&2
                 continue
             else
                 break
@@ -279,14 +307,14 @@ collect_client_ips() {
         first_entry=0
 
         if ! validate_ipv4 "$ip"; then
-            echo "  Invalid IP address. Please enter a valid IPv4 address."
+            echo "  Invalid IP address. Please enter a valid IPv4 address." >&2
             continue
         fi
 
         local existing
         for existing in "${collected[@]}"; do
             if [[ "$existing" == "$ip" ]]; then
-                echo "  Duplicate client IP: $ip (already added)."
+                echo "  Duplicate client IP: $ip (already added)." >&2
                 continue 2
             fi
         done
@@ -311,6 +339,11 @@ print_summary_conflicts() {
     declare -A seen=()
     local ip
     for ip in "${client_ips[@]}"; do
+        if [[ -z "$ip" ]]; then
+            echo "  - Conflict: empty client IP detected."
+            has_conflict=1
+            continue
+        fi
         if [[ -n "${seen[$ip]:-}" ]]; then
             echo "  - Conflict: duplicate client IP detected: $ip"
             has_conflict=1
@@ -355,13 +388,18 @@ write_config_yml() {
     # Build clients YAML block
     local clients_yaml=""
     for ip in "${client_ips[@]}"; do
+        local client_user="${CLIENT_SSH_USERS[$ip]:-$ssh_user}"
         clients_yaml+="  - ip: \"${ip}\""$'\n'
+        clients_yaml+="    ssh_user: \"${client_user}\""$'\n'
     done
 
     cat > "$CONFIG_FILE" <<YAML
 # ── Network ──────────────────────────────────────────────────────────────
 ssh_user: "${ssh_user}"           # SSH username used by deploy.sh
 server_ip: "${server_ip}"         # IP of the server device
+server:
+  ip: "${server_ip}"
+  ssh_user: "${ssh_user}"
 
 clients:                          # Speaker client IPs; used by deploy.sh
 ${clients_yaml}
@@ -399,7 +437,7 @@ YAML
 run_copy_keys() {
     read_existing_config
 
-    local ssh_user="${EXISTING_SSH_USER:-pi}"
+    local default_ssh_user="${EXISTING_SSH_USER:-pi}"
     local server_ip="${EXISTING_SERVER_IP:-}"
     local client_ips=("${EXISTING_CLIENT_IPS[@]+"${EXISTING_CLIENT_IPS[@]}"}")
 
@@ -415,11 +453,13 @@ run_copy_keys() {
     ensure_local_ssh_key
 
     echo "$(bold "Setting up SSH keys for all devices...")"
-    echo "SSH user: $ssh_user"
+    echo "Default SSH user: $default_ssh_user"
     echo ""
 
     local ok=0 fail=0
     for ip in "${all_ips[@]}"; do
+        local ssh_user
+        ssh_user="$(ssh_user_for_host "$ip")"
         if ! ensure_host_key_trusted "$ip"; then
             (( fail++ )) || true
             continue
@@ -453,7 +493,7 @@ run_copy_keys() {
 run_diagnose_ssh() {
     read_existing_config
 
-    local ssh_user="${EXISTING_SSH_USER:-pi}"
+    local default_ssh_user="${EXISTING_SSH_USER:-pi}"
     local server_ip="${EXISTING_SERVER_IP:-}"
     local client_ips=("${EXISTING_CLIENT_IPS[@]+"${EXISTING_CLIENT_IPS[@]}"}")
 
@@ -469,12 +509,15 @@ run_diagnose_ssh() {
     ensure_local_ssh_key || true
 
     echo "$(bold "SSH diagnostics")"
-    echo "User: $ssh_user"
+    echo "Default user: $default_ssh_user"
     echo ""
 
     local failures=0
     for ip in "${all_ips[@]}"; do
+        local ssh_user
+        ssh_user="$(ssh_user_for_host "$ip")"
         echo "$(bold "Host: $ip")"
+        echo "  SSH user: $ssh_user"
 
         if ! ensure_host_key_trusted "$ip"; then
             echo "  $(red "Host key check failed")"
@@ -532,11 +575,16 @@ run_wizard() {
 
     # SSH user
     local ssh_user
-    ssh_user="$(prompt_non_empty_with_default "SSH username on each device" "${EXISTING_SSH_USER:-pi}")"
+    ssh_user="$(prompt_non_empty_with_default "Server SSH username (for ${server_ip})" "${EXISTING_SERVER_SSH_USER:-pi}")"
 
     # Client IPs
     local client_ips=()
     mapfile -t client_ips < <(collect_client_ips EXISTING_CLIENT_IPS)
+    declare -gA CLIENT_SSH_USERS=()
+    local client_ip
+    for client_ip in "${client_ips[@]}"; do
+        CLIENT_SSH_USERS["$client_ip"]="$(prompt_non_empty_with_default "SSH username for client ${client_ip}" "${EXISTING_CLIENT_SSH_USERS[$client_ip]:-$ssh_user}")"
+    done
 
     while true; do
         echo ""
@@ -544,8 +592,11 @@ run_wizard() {
         echo "  System name : $device_name"
         echo "  Preset      : $profile_preset"
         echo "  Server IP   : $server_ip"
-        echo "  SSH user    : $ssh_user"
+        echo "  Server SSH  : $ssh_user"
         echo "  Clients     : ${client_ips[*]}"
+        for client_ip in "${client_ips[@]}"; do
+            echo "    - ${client_ip} (ssh user: ${CLIENT_SSH_USERS[$client_ip]})"
+        done
         echo ""
         echo "Conflict checks:"
         if print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
@@ -560,28 +611,39 @@ run_wizard() {
         echo "  1) Device name"
         echo "  2) Preset"
         echo "  3) Server IP"
-        echo "  4) SSH user"
+        echo "  4) Server SSH user"
         echo "  5) Client IPs"
-        echo "  6) Continue"
+        echo "  6) Client SSH users"
+        echo "  7) Continue"
         local edit_choice
-        read -r -p "Select option [6]: " edit_choice
-        edit_choice="${edit_choice:-6}"
+        read -r -p "Select option [7]: " edit_choice
+        edit_choice="${edit_choice:-7}"
 
         case "$edit_choice" in
             1) device_name="$(prompt_non_empty_with_default "Speaker system name (shown in Spotify)" "$device_name")" ;;
             2) profile_preset="$(choose_profile_preset)" ;;
             3) server_ip="$(prompt_ipv4_with_default "Server device IP" "$server_ip")" ;;
-            4) ssh_user="$(prompt_non_empty_with_default "SSH username on each device" "$ssh_user")" ;;
-            5) mapfile -t client_ips < <(collect_client_ips client_ips) ;;
+            4) ssh_user="$(prompt_non_empty_with_default "Server SSH username (for ${server_ip})" "$ssh_user")" ;;
+            5)
+                mapfile -t client_ips < <(collect_client_ips client_ips)
+                for client_ip in "${client_ips[@]}"; do
+                    CLIENT_SSH_USERS["$client_ip"]="$(prompt_non_empty_with_default "SSH username for client ${client_ip}" "${CLIENT_SSH_USERS[$client_ip]:-$ssh_user}")"
+                done
+                ;;
             6)
+                for client_ip in "${client_ips[@]}"; do
+                    CLIENT_SSH_USERS["$client_ip"]="$(prompt_non_empty_with_default "SSH username for client ${client_ip}" "${CLIENT_SSH_USERS[$client_ip]:-$ssh_user}")"
+                done
+                ;;
+            7)
                 if print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
                     break
                 fi
                 ;;
-            *) echo "  Invalid option. Please choose 1-6." ;;
+            *) echo "  Invalid option. Please choose 1-7." ;;
         esac
 
-        if [[ "$edit_choice" == "6" ]] && ! print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
+        if [[ "$edit_choice" == "7" ]] && ! print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
             echo "Cannot continue until conflicts are resolved."
         fi
     done
