@@ -6,6 +6,7 @@ spotify:
   normalise: true                 # Volume normalisation
   initial_volume: 75              # 0-100
   cache_dir: "/var/cache/librespot"  # OAuth credential cache
+  oauth_callback_port: 4000       # Local callback port used during OAuth
   device_type: "speaker"          # Icon shown in Spotify app
 
 snapserver:

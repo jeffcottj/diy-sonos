@@ -102,27 +102,35 @@ Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `
 
 ## First-Run Spotify Authentication
 
-librespot uses OAuth on first run. Check the logs for the auth URL:
+librespot uses OAuth on first run. After `sudo ./setup.sh server`, use the helper command:
+
+```bash
+sudo librespot-auth-helper 4000 /var/cache/librespot
+```
+
+This command deterministically reports:
+- `cached credentials found` when OAuth credentials already exist in `cache_dir`
+- `auth still pending` when OAuth is not complete yet
+
+It also prints the latest Spotify OAuth URL extracted from:
+
+```bash
+sudo journalctl -u librespot --no-pager -n 400
+```
+
+For live logs, you can still run:
 
 ```bash
 sudo journalctl -u librespot -f
 ```
 
-Look for a line like:
-```
-Please authenticate at: https://accounts.spotify.com/authorize?...
-```
-
-**If you have a browser on the Pi:** open the URL directly.
-
-**If headless (SSH only):** use SSH port-forwarding from your laptop:
+For headless SSH setups, `setup.sh server` now prints a ready-to-copy tunnel one-liner using the detected host IP and configured callback port (default `4000`), for example:
 
 ```bash
-# On your laptop:
-ssh -L 4000:localhost:4000 pi@<pi5-ip>
+ssh -L 4000:localhost:4000 pi@192.168.1.100
 ```
 
-Then open `http://localhost:4000` in your browser and complete the OAuth flow. Credentials are cached in `cache_dir` (default `/var/cache/librespot`) and won't be needed again unless you wipe the cache.
+Then open `http://localhost:4000` in your browser and complete the OAuth flow.
 
 ---
 
@@ -138,6 +146,7 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | `spotify.normalise` | `true` | Enables librespot volume normalisation (`--enable-volume-normalisation` is included only when `true`) |
 | `spotify.initial_volume` | `75` | Initial volume (0–100) |
 | `spotify.cache_dir` | `/var/cache/librespot` | OAuth credential and metadata cache |
+| `spotify.oauth_callback_port` | `4000` | Local OAuth callback port used by librespot and SSH tunnel helper |
 | `spotify.device_type` | `speaker` | Icon shown in Spotify: `speaker`, `avr`, `tv`, etc. |
 | `snapserver.fifo_path` | `/tmp/snapfifo` | Named pipe between librespot and snapserver |
 | `snapserver.sampleformat` | `44100:16:2` | Audio sample format (must match librespot) |

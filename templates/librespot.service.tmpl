@@ -17,7 +17,8 @@ ExecStart=/usr/bin/librespot \
     {{SPOTIFY__NORMALISE_FLAG}} \
     --cache {{SPOTIFY__CACHE_DIR}} \
     --disable-audio-cache \
-    --enable-oauth
+    --enable-oauth \
+    --oauth-port {{SPOTIFY__OAUTH_CALLBACK_PORT}}
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal

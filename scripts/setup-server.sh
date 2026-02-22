@@ -144,6 +144,21 @@ systemd_enable_restart librespot
 systemd_enable_restart snapserver
 
 # ---------------------------------------------------------------------------
+# 11. Install auth helper command
+# ---------------------------------------------------------------------------
+install -m 0755 "$SCRIPT_DIR/scripts/librespot-auth-helper.sh" /usr/local/bin/librespot-auth-helper
+
+# Determine best effort host IP for SSH tunnel instructions
+HOST_IP="$(hostname -I 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i !~ /^127\./) {print $i; exit}}')"
+if [[ -z "$HOST_IP" ]]; then
+    HOST_IP="$(cfg server_ip)"
+fi
+
+CALLBACK_PORT="$(cfg spotify oauth_callback_port 4000)"
+SSH_USER="${SUDO_USER:-$USER}"
+SSH_TUNNEL_CMD="ssh -L ${CALLBACK_PORT}:localhost:${CALLBACK_PORT} ${SSH_USER}@${HOST_IP}"
+
+# ---------------------------------------------------------------------------
 # Done — print OAuth instructions
 # ---------------------------------------------------------------------------
 echo ""
@@ -154,15 +169,22 @@ echo ""
 echo "Next steps:"
 echo ""
 echo "  1. Authenticate with Spotify (first run only):"
-echo "     sudo journalctl -u librespot -f"
-echo "     Look for a URL starting with https://accounts.spotify.com/"
-echo "     Open it in a browser (or use SSH port-forwarding if headless)."
+echo "     Run: sudo librespot-auth-helper ${CALLBACK_PORT} $(cfg spotify cache_dir)"
+echo "     (Shows latest OAuth URL from librespot logs + auth status.)"
+echo "     Or follow logs live: sudo journalctl -u librespot -f"
+echo ""
+echo "     If you're connected over SSH, run this on your laptop:"
+echo "       ${SSH_TUNNEL_CMD}"
+echo "     Then open: http://localhost:${CALLBACK_PORT}"
 echo ""
 echo "  2. Open Spotify on any device and look for:"
 echo "     '$(cfg spotify device_name)' in the device list."
 echo ""
 echo "  3. Run setup on each Pi Zero client:"
 echo "     sudo ./setup.sh client"
+echo ""
+echo "  4. Deterministic auth status check:"
+echo "     sudo librespot-auth-helper ${CALLBACK_PORT} $(cfg spotify cache_dir)"
 echo ""
 echo "  Service status:"
 echo "     sudo systemctl status librespot snapserver"
