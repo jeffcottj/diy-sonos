@@ -314,23 +314,27 @@ deploy_server() {
 surface_oauth_url() {
     local callback_port cache_dir
 
-    callback_port="$(ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
-import re
-try:
-    txt = open('config.yml').read()
-    m = re.search(r'oauth_callback_port:\s*\\"?([^\\"#\n]+)', txt)
-    print(m.group(1).strip() if m else '4000')
-except: print('4000')
+    callback_port="$(ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" \
+        "cd ${REMOTE_DIR} && python3 -c \"\
+import re\
+try:\
+    txt = open('config.yml').read()\
+    m = re.search(r'oauth_callback_port:\\s*\"?([^\"#\\n]+)', txt)\
+    print(m.group(1).strip() if m else '4000')\
+except:\
+    print('4000')\
 \"" 2>/dev/null || echo "4000")"
 
     # Try to read cache_dir from remote config; default to /var/cache/librespot
-    cache_dir="$(ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}"         "cd ${REMOTE_DIR} && python3 -c \"
-import re
-try:
-    txt = open('config.yml').read()
-    m = re.search(r'cache_dir:\s*\\"?([^\\"#\n]+)', txt)
-    print(m.group(1).strip() if m else '/var/cache/librespot')
-except: print('/var/cache/librespot')
+    cache_dir="$(ssh "${SSH_OPTS[@]}" "$(ssh_user_for_host "$SERVER_IP")@${SERVER_IP}" \
+        "cd ${REMOTE_DIR} && python3 -c \"\
+import re\
+try:\
+    txt = open('config.yml').read()\
+    m = re.search(r'cache_dir:\\s*\"?([^\"#\\n]+)', txt)\
+    print(m.group(1).strip() if m else '/var/cache/librespot')\
+except:\
+    print('/var/cache/librespot')\
 \"" 2>/dev/null || echo "/var/cache/librespot")"
 
     echo "$(bold "━━ Spotify Authentication ━━")"
