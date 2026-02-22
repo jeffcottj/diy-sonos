@@ -52,6 +52,24 @@ This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connect
 
 ## Quick Start
 
+### Primary path: one-command guided setup
+
+After install/clone, run:
+
+```bash
+./first-run.sh
+```
+
+This guided script walks you through the complete first-time flow:
+1. Local dependency check (`ssh`, `ssh-copy-id`, `python3`, `rsync`)
+2. Interactive config collection (`./configure.sh`)
+3. SSH key setup (`./configure.sh --copy-keys`)
+4. Connectivity check (key-based SSH to all configured hosts)
+5. Deployment (`./deploy.sh`)
+6. Final Spotify “what to do next” summary
+
+### Manual path (step-by-step)
+
 ### 1. Install from release (recommended)
 
 ```bash
