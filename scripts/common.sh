@@ -59,8 +59,6 @@ parse_config_files() {
     if [[ -n "$generated_yaml" && -f "$generated_yaml" ]]; then
         echo "Using generated config override: $generated_yaml"
         parse_config "$generated_yaml"
-    else
-        echo "No generated config override found; using base config only"
     fi
 }
 
@@ -234,6 +232,20 @@ detect_arch() {
 # Package management
 # ---------------------------------------------------------------------------
 
+# apt_update_if_stale
+# Runs apt-get update only if the package lists are more than 1 hour old.
+apt_update_if_stale() {
+    local stamp="/var/lib/apt/periodic/update-success-stamp"
+    if [[ -f "$stamp" ]]; then
+        local age=$(( $(date +%s) - $(stat -c %Y "$stamp") ))
+        if [[ $age -lt 3600 ]]; then
+            echo "Package lists are fresh (${age}s old); skipping apt-get update"
+            return 0
+        fi
+    fi
+    apt-get update -qq
+}
+
 # pkg_install <pkg...>
 # Installs packages only if not already installed (idempotent).
 pkg_install() {
@@ -318,13 +330,18 @@ ensure_dir() {
 
 # download_file <url> <dest>
 # Downloads a file to dest, skipping if dest already exists.
+# Removes partial file on failure.
 download_file() {
     local url="$1"
     local dest="$2"
     if [[ -f "$dest" ]]; then
         echo "File already downloaded: $dest"
-    else
-        wget -q --show-progress -O "$dest" "$url"
+        return 0
+    fi
+    if ! wget -q --show-progress --timeout=60 -O "$dest" "$url"; then
+        rm -f "$dest"
+        echo "Error: failed to download $url" >&2
+        return 1
     fi
 }
 
@@ -405,10 +422,51 @@ snapshot_file() {
 
 # render_template <tmpl_file> <output_file>
 # Substitutes {{VAR}} placeholders with the current value of $VAR from the environment.
+# Writes atomically via a temp file so a failed write never leaves a truncated file.
 render_template() {
     local tmpl="$1"
     local out="$2"
     python3 - "$tmpl" "$out" <<'PYEOF'
+import sys, os, re, tempfile
+
+tmpl_path, out_path = sys.argv[1], sys.argv[2]
+
+with open(tmpl_path) as f:
+    content = f.read()
+
+def replace(m):
+    var = m.group(1)
+    val = os.environ.get(var)
+    if val is None:
+        raise KeyError(f"Template variable not found in environment: {var}")
+    return val
+
+content = re.sub(r'\{\{([A-Z0-9_]+)\}\}', replace, content)
+
+tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(out_path)))
+try:
+    with os.fdopen(tmp_fd, 'w') as f:
+        f.write(content)
+    os.replace(tmp_path, out_path)
+except:
+    try: os.unlink(tmp_path)
+    except: pass
+    raise
+
+print(f"Rendered: {tmpl_path} -> {out_path}")
+PYEOF
+}
+
+# render_template_if_changed <tmpl_file> <output_file>
+# Like render_template but skips the write if the rendered content is identical
+# to the existing file. Returns 0 if the file was written (new or changed),
+# 1 if unchanged (no write, no side effects).
+render_template_if_changed() {
+    local tmpl="$1"
+    local out="$2"
+    local tmp
+    tmp="$(mktemp)"
+    python3 - "$tmpl" "$tmp" <<'PYEOF'
 import sys, os, re
 
 tmpl_path, out_path = sys.argv[1], sys.argv[2]
@@ -420,7 +478,6 @@ def replace(m):
     var = m.group(1)
     val = os.environ.get(var)
     if val is None:
-        # Try with double-underscore section prefix already uppercased
         raise KeyError(f"Template variable not found in environment: {var}")
     return val
 
@@ -428,9 +485,15 @@ content = re.sub(r'\{\{([A-Z0-9_]+)\}\}', replace, content)
 
 with open(out_path, 'w') as f:
     f.write(content)
-
-print(f"Rendered: {tmpl_path} -> {out_path}")
 PYEOF
+    if [[ -f "$out" ]] && diff -q "$out" "$tmp" > /dev/null 2>&1; then
+        rm -f "$tmp"
+        echo "Unchanged: $out"
+        return 1
+    fi
+    mv "$tmp" "$out"
+    echo "Rendered: $tmpl -> $out"
+    return 0
 }
 
 # ---------------------------------------------------------------------------

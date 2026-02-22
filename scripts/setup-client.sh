@@ -23,7 +23,7 @@ detect_arch
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Installing base dependencies ---"
-apt-get update -qq
+apt_update_if_stale
 pkg_install wget curl ca-certificates alsa-utils
 
 # ---------------------------------------------------------------------------
@@ -56,10 +56,12 @@ echo "Audio device: $RESOLVED_AUDIO_DEVICE"
 echo ""
 echo "--- Rendering systemd service unit ---"
 
+_config_changed=0
+
 snapshot_file /etc/systemd/system/snapclient.service
-render_template \
+render_template_if_changed \
     "$SCRIPT_DIR/templates/snapclient.service.tmpl" \
-    "/etc/systemd/system/snapclient.service"
+    "/etc/systemd/system/snapclient.service" && _config_changed=1 || true
 
 # ---------------------------------------------------------------------------
 # 6. Enable and start service
@@ -67,7 +69,13 @@ render_template \
 echo ""
 echo "--- Enabling snapclient ---"
 
-systemd_enable_restart snapclient
+if [[ $_config_changed -eq 1 ]]; then
+    systemd_enable_restart snapclient
+else
+    echo "Config unchanged — skipping service restart"
+    systemctl enable snapclient 2>/dev/null || true
+    systemctl is-active --quiet snapclient || systemctl start snapclient
+fi
 
 # ---------------------------------------------------------------------------
 # Done

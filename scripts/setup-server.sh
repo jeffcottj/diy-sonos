@@ -23,7 +23,7 @@ detect_arch
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- Installing base dependencies ---"
-apt-get update -qq
+apt_update_if_stale
 pkg_install wget curl ca-certificates alsa-utils avahi-daemon
 
 # ---------------------------------------------------------------------------
@@ -36,8 +36,16 @@ RASPOTIFY_GPG="/usr/share/keyrings/raspotify_pub.gpg"
 RASPOTIFY_LIST="/etc/apt/sources.list.d/raspotify.list"
 
 if [[ ! -f "$RASPOTIFY_GPG" ]]; then
-    curl -sL "https://dtcooper.github.io/raspotify/key.asc" \
-        | gpg --dearmor -o "$RASPOTIFY_GPG"
+    local tmp_key
+    tmp_key="$(mktemp)"
+    if ! curl -fsSL --connect-timeout 30 "https://dtcooper.github.io/raspotify/key.asc" \
+            -o "$tmp_key"; then
+        rm -f "$tmp_key"
+        echo "Error: failed to download raspotify GPG key" >&2
+        exit 1
+    fi
+    gpg --dearmor -o "$RASPOTIFY_GPG" < "$tmp_key"
+    rm -f "$tmp_key"
     echo "Added raspotify GPG key"
 fi
 
@@ -104,10 +112,12 @@ echo "Applied fs.protected_fifos=0"
 echo ""
 echo "--- Rendering snapserver config ---"
 
+_config_changed=0
+
 snapshot_file /etc/snapserver.conf
-render_template \
+render_template_if_changed \
     "$SCRIPT_DIR/templates/snapserver.conf.tmpl" \
-    "/etc/snapserver.conf"
+    "/etc/snapserver.conf" && _config_changed=1 || true
 
 # ---------------------------------------------------------------------------
 # 8. Render systemd service units
@@ -123,14 +133,14 @@ else
 fi
 
 snapshot_file /etc/systemd/system/librespot.service
-render_template \
+render_template_if_changed \
     "$SCRIPT_DIR/templates/librespot.service.tmpl" \
-    "/etc/systemd/system/librespot.service"
+    "/etc/systemd/system/librespot.service" && _config_changed=1 || true
 
 snapshot_file /etc/systemd/system/snapserver.service
-render_template \
+render_template_if_changed \
     "$SCRIPT_DIR/templates/snapserver.service.tmpl" \
-    "/etc/systemd/system/snapserver.service"
+    "/etc/systemd/system/snapserver.service" && _config_changed=1 || true
 
 # ---------------------------------------------------------------------------
 # 9. Create librespot cache directory
@@ -145,8 +155,15 @@ echo "Cache directory ready: $CACHE_DIR"
 echo ""
 echo "--- Enabling services ---"
 
-systemd_enable_restart librespot
-systemd_enable_restart snapserver
+if [[ $_config_changed -eq 1 ]]; then
+    systemd_enable_restart librespot
+    systemd_enable_restart snapserver
+else
+    echo "Config unchanged — skipping service restarts"
+    systemctl enable librespot snapserver 2>/dev/null || true
+    systemctl is-active --quiet librespot || systemctl start librespot
+    systemctl is-active --quiet snapserver || systemctl start snapserver
+fi
 
 # ---------------------------------------------------------------------------
 # 11. Install auth helper command
