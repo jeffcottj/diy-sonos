@@ -5,6 +5,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_CONFIG="$SCRIPT_DIR/config.yml"
 GENERATED_CONFIG="$SCRIPT_DIR/.diy-sonos.generated.yml"
 
+host_has_ip() {
+    local target_ip="$1"
+    [[ -n "$target_ip" ]] || return 1
+
+    if command -v ip >/dev/null 2>&1; then
+        if ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -Fxq "$target_ip"; then
+            return 0
+        fi
+    fi
+
+    if hostname -I 2>/dev/null | tr ' ' '\n' | grep -Fxq "$target_ip"; then
+        return 0
+    fi
+
+    return 1
+}
+
 usage() {
     cat >&2 <<USAGE
 Usage:
@@ -82,7 +99,7 @@ run_install_mode() {
     apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
 
     export DIY_SONOS_COMBO_ROLE=0
-    if [[ "$(cfg profile role client)" == "server+client" ]]; then
+    if [[ "$(cfg profile role client)" == "server+client" ]] || host_has_ip "$(cfg server_ip)"; then
         export DIY_SONOS_COMBO_ROLE=1
     fi
 

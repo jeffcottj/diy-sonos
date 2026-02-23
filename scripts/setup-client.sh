@@ -65,10 +65,16 @@ SNAPCAST_VER="$(require_snapcast_version)"
 SNAP_DEB_URL="https://github.com/badaix/snapcast/releases/download/v${SNAPCAST_VER}/snapclient_${SNAPCAST_VER}-1_${ARCH_DEB}_${OS_CODENAME}.deb"
 install_deb "$SNAP_DEB_URL"
 
-# The snapclient deb may pull in snapserver as a dependency — mask it so it
-# doesn't start on client machines.
-systemctl mask snapserver.service 2>/dev/null || true
-systemctl stop snapserver.service 2>/dev/null || true
+# The snapclient deb may pull in snapserver as a dependency.
+# On client-only devices, mask/stop it.
+# On server+client (combo) devices, keep snapserver running.
+if [[ "${DIY_SONOS_COMBO_ROLE:-0}" -eq 1 ]]; then
+    echo "Combo role detected — leaving snapserver.service unmasked on this host"
+    systemctl unmask snapserver.service 2>/dev/null || true
+else
+    systemctl mask snapserver.service 2>/dev/null || true
+    systemctl stop snapserver.service 2>/dev/null || true
+fi
 
 # ---------------------------------------------------------------------------
 # 4. Resolve audio output device
