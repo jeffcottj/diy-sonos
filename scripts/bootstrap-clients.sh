@@ -33,8 +33,9 @@ Inventory format (simple YAML subset):
       name: Kitchen
       latency: 20
       audio_device: hw:1,0
+      output_volume: 85
 
-Per-client keys: host (required for inventory mapping), name, latency, audio_device.
+Per-client keys: host (required for inventory mapping), name, latency, audio_device, output_volume.
 USAGE
 }
 
@@ -208,7 +209,7 @@ for item in obj.get("clients", []):
         found = item
         break
 
-for key in ("name", "latency", "audio_device"):
+for key in ("name", "latency", "audio_device", "output_volume"):
     value = found.get(key, "")
     print(f"{key}={value}")
 PY
@@ -254,11 +255,13 @@ for host in "${TARGET_HOSTS[@]}"; do
   client_name=""
   client_latency=""
   client_audio_device=""
+  client_output_volume=""
   while IFS='=' read -r k v; do
     case "$k" in
       name) client_name="$v" ;;
       latency) client_latency="$v" ;;
       audio_device) client_audio_device="$v" ;;
+      output_volume) client_output_volume="$v" ;;
     esac
   done <<<"$override_lines"
 
@@ -285,8 +288,12 @@ for host in "${TARGET_HOSTS[@]}"; do
   fi
 
   echo "[$host] Generating client config"
+  setup_init_cmd="cd $REMOTE_DIR && ./setup.sh init --role client --server-ip '$DEFAULT_SERVER_IP' --device-name '$client_name' --audio-device '$client_audio_device'"
+  if [[ -n "$client_output_volume" ]]; then
+    setup_init_cmd+=" --output-volume '$client_output_volume'"
+  fi
   ssh "${SSH_OPTS[@]}" "$SSH_USER@$host" \
-    "cd $REMOTE_DIR && ./setup.sh init --role client --server-ip '$DEFAULT_SERVER_IP' --device-name '$client_name' --audio-device '$client_audio_device'"
+    "$setup_init_cmd"
 
   if [[ -n "$client_latency" ]]; then
     echo "[$host] Applying latency override: $client_latency ms"

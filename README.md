@@ -327,6 +327,7 @@ The script reads per-client overrides from `clients.yml`:
 - `name` → Spotify device name
 - `latency` → `snapclient.latency_ms`
 - `audio_device` → `snapclient.audio_device`
+- `output_volume` → `snapclient.output_volume`
 
 Host selection comes from `--hosts` / `--hosts-file`; `clients.yml` supplies optional overrides by matching `clients[].host`.
 
