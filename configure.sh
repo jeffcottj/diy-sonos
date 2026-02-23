@@ -375,6 +375,7 @@ write_config_yml() {
     local codec="flac"
     local buffer_ms="1200"
     local latency_ms="0"
+    local output_volume="90"
 
     if [[ "$profile_preset" == "advanced" ]]; then
         bitrate="320"
@@ -435,6 +436,7 @@ snapserver:
 
 snapclient:
   audio_device: "auto"            # "auto" = detect first USB audio card; or "hw:1,0" etc.
+  output_volume: ${output_volume}             # Hardware mixer output volume percent (0-100)
   latency_ms: ${latency_ms}                   # Per-client latency trim
   instance: 1
 YAML

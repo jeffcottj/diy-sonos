@@ -414,8 +414,11 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | `snapserver.port` | `1704` | TCP port for audio streaming |
 | `snapserver.control_port` | `1780` | HTTP control API port |
 | `snapclient.audio_device` | `auto` | ALSA device: `auto` or explicit like `hw:1,0` |
+| `snapclient.output_volume` | `90` | Client hardware mixer output volume percent (0–100), applied via `amixer` during client setup |
 | `snapclient.latency_ms` | `0` | Per-client latency trim in milliseconds |
 | `snapclient.instance` | `1` | Instance number (increment for multiple clients on same host) |
+
+`spotify.initial_volume` controls librespot's software stream volume at playback start on the server. `snapclient.output_volume` controls each client's local ALSA hardware mixer ceiling during setup. Use both: set a safe hardware baseline per client with `snapclient.output_volume`, then tune listening level behavior with `spotify.initial_volume`.
 
 ---
 

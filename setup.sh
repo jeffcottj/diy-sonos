@@ -25,11 +25,11 @@ host_has_ip() {
 usage() {
     cat >&2 <<USAGE
 Usage:
-  sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
-  sudo $0 upgrade [--role server|client|server+client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
-  $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--advisory]
-  $0 init [--preset basic|advanced] [--role server|client|server+client] [--server-ip IP] [--client-ips IP[,IP...]] [--device-name NAME] [--audio-device DEVICE] [--backup-snapshots|--backup-dir DIR]
-  sudo $0 doctor server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE]
+  sudo $0 server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--output-volume PERCENT] [--backup-snapshots|--backup-dir DIR]
+  sudo $0 upgrade [--role server|client|server+client] [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--output-volume PERCENT] [--backup-snapshots|--backup-dir DIR]
+  $0 preflight server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--output-volume PERCENT] [--advisory]
+  $0 init [--preset basic|advanced] [--role server|client|server+client] [--server-ip IP] [--client-ips IP[,IP...]] [--device-name NAME] [--audio-device DEVICE] [--output-volume PERCENT] [--backup-snapshots|--backup-dir DIR]
+  sudo $0 doctor server|client [--server-ip IP] [--device-name NAME] [--audio-device DEVICE] [--output-volume PERCENT]
   $0 version
 
 Modes:
@@ -96,7 +96,7 @@ run_install_mode() {
     parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
 
     # CLI flags override any config file values
-    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
+    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE" "$OUTPUT_VOLUME"
 
     export DIY_SONOS_COMBO_ROLE=0
     if [[ "$(cfg profile role client)" == "server+client" ]] || host_has_ip "$(cfg server_ip)"; then
@@ -172,9 +172,10 @@ write_generated_config() {
     local bitrate="$5"
     local normalise="$6"
     local initial_volume="$7"
-    local codec="$8"
-    local buffer_ms="$9"
-    local client_ips_csv="${10:-}"
+    local output_volume="$8"
+    local codec="$9"
+    local buffer_ms="${10}"
+    local client_ips_csv="${11:-}"
 
     local clients_yaml="# clients omitted"
     if [[ -n "$client_ips_csv" ]]; then
@@ -207,6 +208,7 @@ spotify:
 
 snapclient:
   audio_device: "$audio_device"
+  output_volume: $output_volume
 
 snapserver:
   codec: "$codec"
@@ -230,6 +232,7 @@ run_init_mode() {
     local initial_volume="${INITIAL_VOLUME:-}"
     local codec="${CODEC:-}"
     local buffer_ms="${BUFFER_MS:-}"
+    local output_volume="${OUTPUT_VOLUME:-}"
 
     preset="${preset,,}"
     if [[ "$preset" != "basic" && "$preset" != "advanced" ]]; then
@@ -298,6 +301,14 @@ run_init_mode() {
         fi
     fi
 
+    if [[ -z "$output_volume" ]]; then
+        if [[ "$preset" == "basic" ]]; then
+            output_volume="90"
+        else
+            output_volume="$(prompt_with_default "Client hardware output volume (0-100)" "90")"
+        fi
+    fi
+
     if [[ -z "$codec" ]]; then
         if [[ "$preset" == "basic" ]]; then
             codec="flac"
@@ -314,7 +325,7 @@ run_init_mode() {
         fi
     fi
 
-    write_generated_config "$role" "$server_ip" "$device_name" "$audio_device" "$bitrate" "$normalise" "$initial_volume" "$codec" "$buffer_ms" "$client_ips_csv"
+    write_generated_config "$role" "$server_ip" "$device_name" "$audio_device" "$bitrate" "$normalise" "$initial_volume" "$output_volume" "$codec" "$buffer_ms" "$client_ips_csv"
 
     echo ""
     echo "Next steps:"
@@ -413,7 +424,7 @@ check_config_schema_and_values() {
     parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
 
     # CLI flags override any config file values
-    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
+    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE" "$OUTPUT_VOLUME"
 
     if [[ -z "$(cfg server_ip)" ]]; then
         echo "  - Missing required config key: server_ip" >&2
@@ -440,6 +451,13 @@ check_config_schema_and_values() {
         echo "  - Missing required config key: snapclient.audio_device" >&2
         failures=1
     elif ! validate_snapclient_audio_device "$(cfg snapclient audio_device)"; then
+        failures=1
+    fi
+
+    if [[ -z "$(cfg snapclient output_volume)" ]]; then
+        echo "  - Missing required config key: snapclient.output_volume" >&2
+        failures=1
+    elif ! validate_snapclient_output_volume "$(cfg snapclient output_volume)"; then
         failures=1
     fi
 
@@ -533,7 +551,7 @@ run_doctor_mode() {
     fi
 
     parse_config_files "$DEFAULT_CONFIG" "$GENERATED_CONFIG"
-    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE"
+    apply_cli_config_overrides "$SERVER_IP" "$DEVICE_NAME" "$AUDIO_DEVICE" "$OUTPUT_VOLUME"
 
     echo ""
     if [[ "$role" == "server" ]]; then
@@ -632,6 +650,7 @@ AUDIO_DEVICE=""
 BITRATE=""
 NORMALISE=""
 INITIAL_VOLUME=""
+OUTPUT_VOLUME=""
 PRESET=""
 CLIENT_IPS=""
 CODEC=""
@@ -688,6 +707,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --initial-volume)
             INITIAL_VOLUME="$2"
+            shift 2
+            ;;
+        --output-volume)
+            OUTPUT_VOLUME="$2"
             shift 2
             ;;
         --preset)
