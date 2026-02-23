@@ -127,3 +127,13 @@ sudo systemctl enable avahi-daemon
 sudo systemctl restart avahi-daemon
 sudo journalctl -u avahi-daemon -n 50 --no-pager
 ```
+
+
+## Volume controls: Spotify vs client hardware
+
+If volume behavior is confusing, verify both settings:
+
+- `spotify.initial_volume` sets the starting playback volume for librespot (server-side stream volume).
+- `snapclient.output_volume` sets each client's ALSA hardware mixer output percent during `setup.sh client`.
+
+A practical pattern is to keep `snapclient.output_volume` at a safe fixed baseline per speaker, then adjust `spotify.initial_volume` for how loud playback starts in Spotify Connect.

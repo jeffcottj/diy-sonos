@@ -42,6 +42,7 @@ resolve_mixer_card_for_playback_device() {
 }
 
 set_client_output_volume_max() {
+    local target_volume="$1"
     if ! command -v amixer >/dev/null 2>&1; then
         echo "amixer not found; skipping ALSA mixer volume tuning"
         return 0
@@ -58,16 +59,16 @@ set_client_output_volume_max() {
     mixer="$(amixer -c "$card" scontrols 2>/dev/null | awk -F"'" 'NR==1{print $2}' || true)"
 
     if [[ -n "$mixer" ]]; then
-        if amixer -c "$card" sset "$mixer" 100% unmute >/dev/null 2>&1; then
-            echo "Set ALSA mixer '$mixer' to 100% (playback='$RESOLVED_AUDIO_DEVICE', card='$card')"
+        if amixer -c "$card" sset "$mixer" "${target_volume}%" unmute >/dev/null 2>&1; then
+            echo "Set ALSA mixer '$mixer' to ${target_volume}% (playback='$RESOLVED_AUDIO_DEVICE', card='$card')"
             return 0
         fi
     fi
 
     local fallback_control
     for fallback_control in Master PCM Speaker; do
-        if amixer -c "$card" sset "$fallback_control" 100% unmute >/dev/null 2>&1; then
-            echo "Set ALSA mixer '$fallback_control' to 100% (playback='$RESOLVED_AUDIO_DEVICE', card='$card')"
+        if amixer -c "$card" sset "$fallback_control" "${target_volume}%" unmute >/dev/null 2>&1; then
+            echo "Set ALSA mixer '$fallback_control' to ${target_volume}% (playback='$RESOLVED_AUDIO_DEVICE', card='$card')"
             return 0
         fi
     done
@@ -130,7 +131,7 @@ resolve_audio_device "$(cfg snapclient audio_device)"
 echo "Audio device: $RESOLVED_AUDIO_DEVICE"
 echo "Mixer card:   $(resolve_mixer_card_for_playback_device "$RESOLVED_AUDIO_DEVICE" || echo '<unresolved>')"
 
-set_client_output_volume_max
+set_client_output_volume_max "$(cfg snapclient output_volume 100)"
 
 # Validate that the resolved audio device is usable in a system service
 if [[ "$RESOLVED_AUDIO_DEVICE" == "default" ]]; then

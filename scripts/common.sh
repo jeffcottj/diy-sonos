@@ -62,12 +62,13 @@ parse_config_files() {
     fi
 }
 
-# apply_cli_config_overrides <server_ip> <device_name> <audio_device>
+# apply_cli_config_overrides <server_ip> <device_name> <audio_device> <output_volume>
 # Highest precedence configuration layer.
 apply_cli_config_overrides() {
     local server_ip="$1"
     local device_name="$2"
     local audio_device="$3"
+    local output_volume="$4"
 
     if [[ -n "$server_ip" ]]; then
         export SERVER_IP="$server_ip"
@@ -79,6 +80,10 @@ apply_cli_config_overrides() {
 
     if [[ -n "$audio_device" ]]; then
         export SNAPCLIENT__AUDIO_DEVICE="$audio_device"
+    fi
+
+    if [[ -n "$output_volume" ]]; then
+        export SNAPCLIENT__OUTPUT_VOLUME="$output_volume"
     fi
 }
 
@@ -191,6 +196,20 @@ validate_snapclient_audio_device() {
 
     echo "snapclient.audio_device '$value' must be 'auto', 'default', or an ALSA device like 'hw:1,0'"
     return 1
+}
+
+validate_snapclient_output_volume() {
+    local value="$1"
+
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        echo "snapclient.output_volume '$value' must be an integer between 0 and 100"
+        return 1
+    fi
+
+    if ((value < 0 || value > 100)); then
+        echo "snapclient.output_volume '$value' must be between 0 and 100"
+        return 1
+    fi
 }
 
 # ---------------------------------------------------------------------------
