@@ -7,28 +7,72 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$SCRIPT_DIR/scripts/cleanup-legacy.sh"
 
+first_real_mixer_card_from_aplay() {
+    if ! command -v aplay >/dev/null 2>&1; then
+        return 0
+    fi
+
+    aplay -l 2>/dev/null | awk '
+        /^card[[:space:]]+/ {
+            if (match($0, /^card[[:space:]]+([^:]+):/, m)) {
+                print m[1]
+                exit
+            }
+        }
+    '
+}
+
+resolve_mixer_card_for_playback_device() {
+    local playback_device="${1:-}"
+    local parsed_card=""
+
+    case "$playback_device" in
+        plughw:*|hw:*)
+            parsed_card="${playback_device#*:}"
+            parsed_card="${parsed_card%%,*}"
+            ;;
+    esac
+
+    if [[ -n "$parsed_card" ]]; then
+        printf '%s\n' "$parsed_card"
+        return 0
+    fi
+
+    first_real_mixer_card_from_aplay
+}
+
 set_client_output_volume_max() {
     if ! command -v amixer >/dev/null 2>&1; then
         echo "amixer not found; skipping ALSA mixer volume tuning"
         return 0
     fi
 
-    local mixer
-    mixer="$(amixer -D "$RESOLVED_AUDIO_DEVICE" scontrols 2>/dev/null | awk -F"'" 'NR==1{print $2}' || true)"
+    local card mixer
+    card="$(resolve_mixer_card_for_playback_device "$RESOLVED_AUDIO_DEVICE" || true)"
+
+    if [[ -z "$card" ]]; then
+        echo "Warning: could not derive ALSA mixer card for playback device '$RESOLVED_AUDIO_DEVICE'; skipping volume tuning" >&2
+        return 0
+    fi
+
+    mixer="$(amixer -c "$card" scontrols 2>/dev/null | awk -F"'" 'NR==1{print $2}' || true)"
 
     if [[ -n "$mixer" ]]; then
-        if amixer -D "$RESOLVED_AUDIO_DEVICE" sset "$mixer" 100% unmute >/dev/null 2>&1; then
-            echo "Set ALSA mixer '$mixer' to 100% on $RESOLVED_AUDIO_DEVICE"
+        if amixer -c "$card" sset "$mixer" 100% unmute >/dev/null 2>&1; then
+            echo "Set ALSA mixer '$mixer' to 100% (playback='$RESOLVED_AUDIO_DEVICE', card='$card')"
             return 0
         fi
     fi
 
-    if amixer -D "$RESOLVED_AUDIO_DEVICE" sset Master 100% unmute >/dev/null 2>&1; then
-        echo "Set ALSA mixer 'Master' to 100% on $RESOLVED_AUDIO_DEVICE"
-        return 0
-    fi
+    local fallback_control
+    for fallback_control in Master PCM Speaker; do
+        if amixer -c "$card" sset "$fallback_control" 100% unmute >/dev/null 2>&1; then
+            echo "Set ALSA mixer '$fallback_control' to 100% (playback='$RESOLVED_AUDIO_DEVICE', card='$card')"
+            return 0
+        fi
+    done
 
-    echo "Warning: could not set ALSA mixer level on $RESOLVED_AUDIO_DEVICE; tune with alsamixer manually" >&2
+    echo "Warning: no usable ALSA mixer control found (playback='$RESOLVED_AUDIO_DEVICE', card='$card'); tune with alsamixer manually" >&2
 }
 
 
@@ -84,6 +128,7 @@ echo "--- Resolving audio device ---"
 
 resolve_audio_device "$(cfg snapclient audio_device)"
 echo "Audio device: $RESOLVED_AUDIO_DEVICE"
+echo "Mixer card:   $(resolve_mixer_card_for_playback_device "$RESOLVED_AUDIO_DEVICE" || echo '<unresolved>')"
 
 set_client_output_volume_max
 
