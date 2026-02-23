@@ -137,3 +137,33 @@ If volume behavior is confusing, verify both settings:
 - `snapclient.output_volume` sets each client's ALSA hardware mixer output percent during `setup.sh client`.
 
 A practical pattern is to keep `snapclient.output_volume` at a safe fixed baseline per speaker, then adjust `spotify.initial_volume` for how loud playback starts in Spotify Connect.
+
+## ALSA mixer state not persisting across reboot
+
+### Symptoms
+
+- `setup.sh client` sets expected volume, but after reboot speaker volume returns to an unexpected level.
+- `setup.sh doctor client` warns that `alsa-restore.service` / `alsa-state.service` is not enabled or active.
+
+### Why it matters
+
+ALSA mixer persistence depends on both `alsactl store` writing state and a restore unit loading that state at boot.
+
+### Suggested commands
+
+```bash
+sudo alsactl store
+sudo systemctl enable --now alsa-restore.service
+```
+
+If your distro ships `alsa-state.service` instead:
+
+```bash
+sudo systemctl enable --now alsa-state.service
+```
+
+### USB card renumbering caveat
+
+Even with persistence enabled, USB sound devices can still be renumbered (for example, `card 1` becoming `card 2`) after hardware changes or boot-order differences. If your playback config references numeric cards (like `hw:1,0`), mixer state may apply to the wrong device.
+
+Prefer stable ALSA card names when possible (for example `plughw:Device,0`), and if needed create ALSA aliases / udev-based naming so your target USB DAC keeps a consistent logical name across reboots.
