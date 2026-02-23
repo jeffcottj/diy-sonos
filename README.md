@@ -40,13 +40,8 @@ All devices must be on the same local network.
 
 ## Prerequisites
 
-All devices must have SSH key authentication set up so `deploy.sh` can connect without a password prompt. Run once from your laptop:
-
-```bash
-./configure.sh --copy-keys
-```
-
-This calls `ssh-copy-id` for every IP in `config.yml`. If you have never connected to a target device before, you may be asked to accept the host key on first connection.
+- All devices must have SSH key authentication set up so `deploy.sh` can connect without a password prompt.
+- You must know the IP address for each device you want to configure.
 
 ---
 
