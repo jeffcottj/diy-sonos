@@ -588,6 +588,7 @@ run_doctor_mode() {
     else
         echo "- Service checks"
         doctor_check_snapclient_service || failed=1
+        doctor_check_alsa_restore_service || failed=1
 
         echo "- Key connectivity checks"
         local server_ip

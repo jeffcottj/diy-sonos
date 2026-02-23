@@ -705,3 +705,59 @@ doctor_check_avahi_service() {
 doctor_check_snapclient_service() {
     doctor_check_systemd_service "snapclient" "sudo systemctl restart snapclient"
 }
+
+doctor_check_alsa_restore_service() {
+    local unit
+    local present_units=()
+    local enabled_any=0
+    local active_any=0
+
+    for unit in alsa-restore.service alsa-state.service; do
+        if systemctl list-unit-files --type=service --all | awk '{print $1}' | grep -qx "$unit"; then
+            present_units+=("$unit")
+        fi
+    done
+
+    if [[ ${#present_units[@]} -eq 0 ]]; then
+        doctor_report warn "No ALSA restore units found (alsa-restore.service / alsa-state.service)." \
+            "Without one of these units, saved ALSA mixer levels are not automatically restored after boot." \
+            "sudo apt-get install -y alsa-utils"
+        return 0
+    fi
+
+    for unit in "${present_units[@]}"; do
+        local enabled_state active_state
+        enabled_state="$(systemctl is-enabled "$unit" 2>/dev/null || true)"
+        active_state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+
+        if [[ "$enabled_state" == "enabled" ]]; then
+            doctor_report pass "${unit} is enabled."
+            enabled_any=1
+        else
+            doctor_report warn "${unit} is not enabled (state: ${enabled_state:-unknown})." \
+                "After reboot, ALSA mixer state may not be restored automatically." \
+                "sudo systemctl enable ${unit}"
+        fi
+
+        if [[ "$active_state" == "active" ]]; then
+            doctor_report pass "${unit} is active."
+            active_any=1
+        else
+            doctor_report warn "${unit} is not active (state: ${active_state:-unknown})." \
+                "If inactive while boot has completed, saved mixer state may not have been applied." \
+                "sudo systemctl start ${unit}"
+        fi
+    done
+
+    if [[ $enabled_any -eq 0 ]]; then
+        doctor_report warn "No installed ALSA restore unit is enabled." \
+            "Mixer levels can reset to driver defaults after reboot." \
+            "sudo systemctl enable ${present_units[0]}"
+    fi
+
+    if [[ $active_any -eq 0 ]]; then
+        doctor_report warn "No installed ALSA restore unit is currently active." \
+            "ALSA mixer state restore may not be running on this system." \
+            "sudo systemctl start ${present_units[0]}"
+    fi
+}

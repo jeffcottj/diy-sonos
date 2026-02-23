@@ -76,6 +76,28 @@ set_client_output_volume_max() {
     echo "Warning: no usable ALSA mixer control found (playback='$RESOLVED_AUDIO_DEVICE', card='$card'); tune with alsamixer manually" >&2
 }
 
+enable_alsa_restore_units() {
+    local unit
+    local found=0
+
+    for unit in alsa-restore.service alsa-state.service; do
+        if ! systemctl list-unit-files --type=service --all | awk '{print $1}' | grep -qx "$unit"; then
+            echo "ALSA restore unit not present on this distro: $unit (skipping)"
+            continue
+        fi
+
+        found=1
+        systemctl unmask "$unit" 2>/dev/null || true
+        systemctl enable "$unit" >/dev/null 2>&1 || true
+        systemctl is-active --quiet "$unit" || systemctl start "$unit" >/dev/null 2>&1 || true
+        echo "Ensured ALSA restore unit: $unit"
+    done
+
+    if [[ $found -eq 0 ]]; then
+        echo "Warning: neither alsa-restore.service nor alsa-state.service is installed; ALSA mixer restore at boot is unavailable" >&2
+    fi
+}
+
 
 echo ""
 echo "=========================================="
@@ -132,6 +154,20 @@ echo "Audio device: $RESOLVED_AUDIO_DEVICE"
 echo "Mixer card:   $(resolve_mixer_card_for_playback_device "$RESOLVED_AUDIO_DEVICE" || echo '<unresolved>')"
 
 set_client_output_volume_max "$(cfg snapclient output_volume 100)"
+
+if command -v alsactl >/dev/null 2>&1; then
+    if alsactl store >/dev/null 2>&1; then
+        echo "Persisted ALSA mixer state via: alsactl store"
+    elif alsactl -f /var/lib/alsa/asound.state store >/dev/null 2>&1; then
+        echo "Persisted ALSA mixer state via: alsactl -f /var/lib/alsa/asound.state store"
+    else
+        echo "Warning: failed to persist ALSA mixer state with alsactl; mixer levels may reset on reboot" >&2
+    fi
+else
+    echo "Warning: alsactl not found; cannot persist ALSA mixer state" >&2
+fi
+
+enable_alsa_restore_units
 
 # Validate that the resolved audio device is usable in a system service
 if [[ "$RESOLVED_AUDIO_DEVICE" == "default" ]]; then
