@@ -167,3 +167,121 @@ sudo systemctl enable --now alsa-state.service
 Even with persistence enabled, USB sound devices can still be renumbered (for example, `card 1` becoming `card 2`) after hardware changes or boot-order differences. If your playback config references numeric cards (like `hw:1,0`), mixer state may apply to the wrong device.
 
 Prefer stable ALSA card names when possible (for example `plughw:Device,0`), and if needed create ALSA aliases / udev-based naming so your target USB DAC keeps a consistent logical name across reboots.
+
+## Collecting diagnostics to share
+
+If Spotify shows your DIY Sonos device and playback appears to progress, but you hear no audio, collect the following diagnostics.
+
+### 1. Deployment and config context (laptop)
+
+Run from your laptop in the repo:
+
+```bash
+./setup.sh version
+./setup.sh preflight server --advisory
+./setup.sh preflight client --advisory
+sed -n '1,220p' config.yml
+test -f .diy-sonos.generated.yml && sed -n '1,260p' .diy-sonos.generated.yml
+```
+
+If you used guided setup, also share the terminal output from:
+
+```bash
+./first-run.sh
+```
+
+### 2. Server-side diagnostics
+
+SSH into the server and run:
+
+```bash
+sudo systemctl status librespot snapserver avahi-daemon --no-pager -l
+sudo journalctl -u librespot -n 200 --no-pager
+sudo journalctl -u snapserver -n 200 --no-pager
+sudo ./setup.sh doctor server
+sudo ss -ltnp | rg ':(1704|1780)\b'
+```
+
+Then verify the Spotify audio path:
+
+```bash
+# FIFO should exist
+ls -l /run/diy-sonos/snapfifo
+
+# During active Spotify playback this should show at least one writer/reader
+sudo lsof /run/diy-sonos/snapfifo || true
+
+# Confirm effective units and binaries
+systemctl cat librespot
+systemctl cat snapserver
+```
+
+### 3. Client-side diagnostics (each client)
+
+On each client:
+
+```bash
+sudo systemctl status snapclient --no-pager -l
+sudo journalctl -u snapclient -n 200 --no-pager
+sudo ./setup.sh doctor client
+systemctl cat snapclient
+```
+
+Audio device checks:
+
+```bash
+aplay -l
+aplay -L | head -n 80
+speaker-test -t wav -c 2 -D "$(awk '/--soundcard/{print $2; exit}' /etc/systemd/system/snapclient.service)" || true
+```
+
+If `speaker-test -D default` fails, retry with a concrete ALSA device shown by `aplay -l`, for example `plughw:1,0`.
+
+### Minimal bundle to share with an agent
+
+Please paste or attach:
+
+1. `config.yml` and `.diy-sonos.generated.yml` (if present)
+2. Output of:
+   - `sudo ./setup.sh doctor server`
+   - `sudo ./setup.sh doctor client` (from each client)
+   - `sudo systemctl status librespot snapserver snapclient --no-pager -l`
+   - `sudo journalctl -u librespot -u snapserver -u snapclient -n 200 --no-pager`
+3. `systemctl cat librespot`, `systemctl cat snapserver`, and `systemctl cat snapclient`
+4. `aplay -l` and `speaker-test` command/results per client
+5. Exact timestamp when you started Spotify playback and for how long (e.g., "played from 20:14:10 to 20:14:45")
+
+That timestamp helps correlate journal logs quickly.
+
+## Common failure signatures
+
+### A) `librespot` logs show `Broken pipe (os error 32)`
+
+This usually means the FIFO consumer is missing (snapserver not running/connected to FIFO) while librespot writes.
+
+Check:
+
+- `snapserver.service` is active on the server.
+- Server+client hosts did **not** accidentally mask/stop snapserver while configuring client role.
+- `/etc/systemd/system/librespot.service` uses `--backend pipe --device /run/diy-sonos/snapfifo`.
+- `/etc/snapserver.conf` uses `source = pipe:///run/diy-sonos/snapfifo?...`.
+
+> **Note on `fs.protected_fifos`:** The default FIFO path `/run/diy-sonos/snapfifo` needs no sysctl change. Only a user-overridden `fifo_path` under `/tmp` or `/var/tmp` triggers the `fs.protected_fifos=0` sysctl via `/etc/sysctl.d/99-snapfifo.conf`.
+
+### B) Client service active but silent output
+
+Usually ALSA device mismatch.
+
+Check:
+
+- `--soundcard` in `snapclient.service` is a real device (`plughw:X,Y` or `hw:X,Y`), not `default`.
+- `speaker-test` succeeds with that same device.
+- Mixer volume is not muted (`alsamixer` / `amixer`).
+
+### C) One client works with `speaker-test` but not Spotify
+
+Then local audio hardware is likely okay. Focus on stream path:
+
+- Server FIFO activity during playback (`lsof /run/diy-sonos/snapfifo`).
+- Server `snapserver` logs for repeated connect/disconnect errors.
+- Client `snapclient` logs for stream/connect/decode errors.

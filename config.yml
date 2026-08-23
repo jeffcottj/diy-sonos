@@ -18,7 +18,7 @@ spotify:
 
 # ── Advanced ──────────────────────────────────────────────────────────────
 snapserver:
-  fifo_path: "/tmp/snapfifo"
+  fifo_path: "/run/diy-sonos/snapfifo"  # named pipe between librespot and snapserver; keep outside /tmp
   sampleformat: "44100:16:2"      # Must match librespot output
   codec: "flac"                   # flac | pcm
   buffer_ms: 1000                 # End-to-end latency target

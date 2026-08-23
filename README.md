@@ -13,7 +13,7 @@ Spotify App
 librespot  (server device)
     │  raw PCM S16 44100:16:2 written to named pipe
     ▼
-/tmp/snapfifo  (FIFO)
+/run/diy-sonos/snapfifo  (FIFO)
     │
     ▼
 snapserver  (server device — encodes FLAC, streams over TCP 1704)
@@ -42,6 +42,7 @@ All devices must be on the same local network.
 
 - All devices must have SSH key authentication set up so `deploy.sh` can connect without a password prompt.
 - You must know the IP address for each device you want to configure.
+- Laptop: `python3` is required (laptop scripts parse `config.yml` via `scripts/parse-network-config.py`, stdlib only — no `pyyaml` needed). Also need `ssh`, `ssh-copy-id`, `rsync`.
 
 ---
 
@@ -65,27 +66,11 @@ This guided script walks you through the complete first-time flow:
 5. Deployment (`./deploy.sh`)
 6. Final Spotify “what to do next” summary
 
-### Manual path (step-by-step)
+---
 
-### Fastest path (recommended for first install)
+## Manual path (step-by-step)
 
-Use the beginner preset to generate `.diy-sonos.generated.yml` with only the essentials:
-
-- server IP
-- one or more client IPs
-- optional speaker name
-
-All advanced audio values are auto-filled (bitrate, codec, buffer, audio auto-detect).
-
-```bash
-./setup.sh init --preset basic
-```
-
-Non-interactive example:
-
-```bash
-./setup.sh init --preset basic --server-ip 192.168.1.100 --client-ips 192.168.1.121,192.168.1.122 --device-name "Living Room"
-```
+If you prefer to run each step explicitly — or to automate via `--preset` — use this path.
 
 ### 1. Install from release (recommended)
 
@@ -108,7 +93,7 @@ To keep persistent snapshots of existing `config.yml` files before reinstalling:
 ./install.sh --tag v0.1.0 --backup-dir "$HOME/diy-sonos-install-backups"
 ```
 
-### If this command fails
+#### If this command fails
 
 Use one of these fallback paths:
 
@@ -166,6 +151,26 @@ Then set up SSH keys (one-time):
 ./configure.sh --copy-keys
 ```
 
+#### Alternative: non-interactive preset (fastest path)
+
+Use the beginner preset to generate `.diy-sonos.generated.yml` with only the essentials:
+
+- server IP
+- one or more client IPs
+- optional speaker name
+
+All advanced audio values are auto-filled (bitrate, codec, buffer, audio auto-detect).
+
+```bash
+./setup.sh init --preset basic
+```
+
+Non-interactive example:
+
+```bash
+./setup.sh init --preset basic --server-ip 192.168.1.100 --client-ips 192.168.1.121,192.168.1.122 --device-name "Living Room"
+```
+
 ### 3. Deploy everything from your laptop
 
 ```bash
@@ -185,6 +190,8 @@ Select your speaker system from the Spotify device list. Music plays on all spea
 
 ---
 
+## Operating an install
+
 ### Upgrade an existing install
 
 Use upgrade mode to re-run idempotent package/service setup for the configured role while preserving your existing config files:
@@ -200,8 +207,7 @@ sudo ./setup.sh upgrade --role server
 sudo ./setup.sh upgrade --role client
 ```
 
-
-### Run fast preflight checks (optional but recommended)
+### Preflight checks (optional but recommended)
 
 ```bash
 ./setup.sh preflight server
@@ -210,8 +216,7 @@ sudo ./setup.sh upgrade --role client
 
 Preflight validates required binaries (`apt-get`, `systemctl`), network reachability, supported OS/arch, and key config values before install. `setup.sh server|client` runs this automatically and aborts early if checks fail.
 
-
-### Run runtime health checks (doctor)
+### Runtime health checks (doctor)
 
 ```bash
 sudo ./setup.sh doctor server
@@ -252,7 +257,7 @@ Recovering partially configured hosts:
    ./deploy.sh
    ```
 
-Optional backup snapshots before major writes:
+### Backup snapshots before major writes
 
 ```bash
 sudo ./setup.sh server --backup-snapshots
@@ -271,9 +276,21 @@ sudo systemctl daemon-reload
 sudo systemctl restart snapclient
 ```
 
+All setup scripts are idempotent — safe to re-run after changing `config.yml`:
+
+```bash
+sudo ./setup.sh server    # re-renders configs and restarts services
+sudo ./setup.sh client    # re-renders client service and restarts
+sudo ./setup.sh upgrade   # detects role and re-runs install safely
+```
+
+Packages are only installed if not already present. Services are restarted only after configuration is updated.
+
 ---
 
-### Advanced: on-device setup (alternative to deploy.sh)
+## Advanced
+
+### On-device setup (alternative to deploy.sh)
 
 If you prefer to SSH into each device individually:
 
@@ -304,11 +321,17 @@ Config precedence is:
 2. `.diy-sonos.generated.yml`
 3. `config.yml` (repo defaults)
 
-### Advanced: bootstrap many clients remotely
+### Server+client combo
+
+For a single host acting as both server and player, set `profile.role: "server+client"` and run both modes (`sudo ./setup.sh server` then `sudo ./setup.sh client`) on that host. The bootstrap and deploy flows detect this via `host_has_ip`.
+
+### Bootstrap many clients remotely
 
 For power users who need per-client latency overrides via an inventory file:
 
 ```bash
+cp clients.example.yml clients.yml
+# Edit clients.yml with your per-client overrides
 ./scripts/bootstrap-clients.sh --hosts 192.168.1.121,192.168.1.122 --inventory clients.yml
 ```
 
@@ -326,24 +349,22 @@ The script reads per-client overrides from `clients.yml`:
 
 Host selection comes from `--hosts` / `--hosts-file`; `clients.yml` supplies optional overrides by matching `clients[].host`.
 
-### Advanced: manual YAML editing
+Secure SSH prerequisites for remote bootstrap:
+
+- SSH key-based authentication is configured for each client (`ssh-copy-id` or equivalent).
+- Host keys are verified and present in `~/.ssh/known_hosts` (do a manual SSH once per host).
+- The remote user can run `sudo ./setup.sh client` non-interactively when automating. Use `--sudo-passless-check` to fail fast if passwordless sudo is unavailable.
+- You trust the management machine running the script, since it handles your SSH key and can execute privileged commands remotely.
+
+The script uses OpenSSH BatchMode (`-o BatchMode=yes`) so it will fail instead of prompting for passwords.
+
+`scripts/bootstrap-clients.sh` is also designed for idempotent reruns: it re-syncs the repo, regenerates `.diy-sonos.generated.yml`, reapplies latency overrides from inventory, and re-runs `sudo ./setup.sh client` on each target host.
+
+### Manual YAML editing
 
 If you prefer to hand-edit config, update `config.yml` and/or `.diy-sonos.generated.yml` directly.
 
 Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `SNAPCAST_VER_DEFAULT`. Update that value, then re-run setup on server and clients.
-
----
-
-## Contributor / Developer Path (clone from source)
-
-If you are developing or contributing, clone from source instead of using the release installer:
-
-```bash
-git clone https://github.com/jeffcottj/diy-sonos.git
-cd diy-sonos
-```
-
-Then run the same guided workflow (`./setup.sh init`, `sudo ./setup.sh server|client`).
 
 ---
 
@@ -403,7 +424,7 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | `spotify.cache_dir` | `/var/cache/librespot` | OAuth credential and metadata cache |
 | `spotify.oauth_callback_port` | `4000` | Local OAuth callback port used by librespot and SSH tunnel helper |
 | `spotify.device_type` | `speaker` | Icon shown in Spotify: `speaker`, `avr`, `tv`, etc. |
-| `snapserver.fifo_path` | `/tmp/snapfifo` | Named pipe between librespot and snapserver |
+| `snapserver.fifo_path` | `/run/diy-sonos/snapfifo` | Named pipe between librespot and snapserver; keep outside `/tmp` |
 | `snapserver.sampleformat` | `44100:16:2` | Audio sample format (must match librespot) |
 | `snapserver.codec` | `flac` | Streaming codec: `flac` or `pcm` |
 | `snapserver.buffer_ms` | `1000` | End-to-end latency buffer in milliseconds |
@@ -415,6 +436,22 @@ Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client`
 | `snapclient.instance` | `1` | Instance number (increment for multiple clients on same host) |
 
 `spotify.initial_volume` controls librespot's software stream volume at playback start on the server. `snapclient.output_volume` controls each client's local ALSA hardware mixer ceiling during setup. Use both: set a safe hardware baseline per client with `snapclient.output_volume`, then tune listening level behavior with `spotify.initial_volume`.
+
+### Preset tuning profiles
+
+`configure.sh` writes `profile_preset: basic|advanced` and chooses defaults per profile. `setup.sh init --preset` uses the same values.
+
+| Key | basic | advanced |
+|-----|-------|----------|
+| `spotify.bitrate` | 320 | 320 |
+| `spotify.normalise` | true | true |
+| `spotify.initial_volume` | 90 | 90 |
+| `snapserver.codec` | flac | pcm |
+| `snapserver.buffer_ms` | 1000 | 800 |
+| `snapclient.latency_ms` | 0 | -20 |
+| `snapclient.output_volume` | 90 | 90 |
+
+Basic is the recommended first install; advanced trades a lower buffer for tighter sync and uses `pcm` for lower CPU on constrained clients. Both default to 320 kbps and volume 90; modify after wizard by editing `config.yml`.
 
 ---
 
@@ -443,84 +480,12 @@ aplay -l
 
 ## Troubleshooting
 
-### No sound on a client
+See the full guide at [docs/troubleshooting.md](docs/troubleshooting.md) — it includes `setup.sh doctor` severity labels, `collect diagnostics` steps, and common failure signatures.
 
-```bash
-# Run built-in diagnostics first
-sudo ./setup.sh doctor client
+**Three most common fixes:**
 
-# Check snapclient is running
-sudo systemctl status snapclient
+- **No sound on a client →** `sudo ./setup.sh doctor client`; check `aplay -l` and `speaker-test -D <device>`; verify `snapclient.audio_device` matches a real `plughw:X,Y`.
+- **Device not visible in Spotify →** `sudo systemctl status avahi-daemon librespot --no-pager -l` and `sudo journalctl -u librespot -n 100 --no-pager`; ensure `avahi-daemon` is active (mDNS discovery).
+- **Audio dropouts / poor sync →** increase `snapserver.buffer_ms` (e.g. `2000`) in `config.yml` and redeploy; ensure strong Wi-Fi; try `codec: pcm` for lower CPU.
 
-# Check it can reach the server
-sudo journalctl -u snapclient -f
-
-# Test the audio device directly
-aplay -l                              # list devices
-speaker-test -t wav -c 2 -D hw:1,0   # replace hw:1,0 with your device
-```
-
-### Device not found in Spotify
-
-```bash
-# Check librespot is running and authenticated
-sudo systemctl status librespot
-sudo journalctl -u librespot -f
-
-# Ensure avahi-daemon is running (for mDNS discovery)
-sudo systemctl status avahi-daemon
-```
-
-### Audio dropouts / poor sync
-
-- Increase `snapserver.buffer_ms` (e.g. 2000) in `config.yml` and re-run server setup.
-- Ensure all devices have a strong Wi-Fi signal.
-- Check CPU load on client devices: `top` — lower-power clients can handle FLAC decoding but should not be doing other heavy work.
-- Try `codec: pcm` in `config.yml` if FLAC decoding causes issues on lower-power clients.
-
-### FIFO errors / librespot can't write to pipe
-
-```bash
-# Check FIFO exists
-ls -la /tmp/snapfifo
-
-# Check sysctl setting
-sysctl fs.protected_fifos   # should be 0
-
-# Recreate FIFO if missing
-sudo mkfifo /tmp/snapfifo
-sudo systemctl restart librespot snapserver
-```
-
-### USB DAC card number changed after reboot
-
-Set `snapclient.audio_device` to an explicit `hw:N,0` value and re-run client setup. Card numbers are assigned by the kernel at boot and can shift when devices are added/removed.
-
----
-
-## Re-running Setup
-
-All setup scripts are idempotent — safe to re-run after changing `config.yml`:
-
-```bash
-sudo ./setup.sh server    # re-renders configs and restarts services
-sudo ./setup.sh client    # re-renders client service and restarts
-sudo ./setup.sh upgrade   # detects role and re-runs install safely
-```
-
-Packages are only installed if not already present. Services are restarted only after configuration is updated.
-
-`scripts/bootstrap-clients.sh` is also designed for idempotent reruns: it re-syncs the repo, regenerates `.diy-sonos.generated.yml`, reapplies latency overrides from inventory, and re-runs `sudo ./setup.sh client` on each target host.
-
----
-
-## Secure SSH Prerequisites for Remote Bootstrap
-
-Before using `scripts/bootstrap-clients.sh`, ensure:
-
-- SSH key-based authentication is configured for each client (`ssh-copy-id` or equivalent).
-- Host keys are verified and present in `~/.ssh/known_hosts` (do a manual SSH once per host).
-- The remote user can run `sudo ./setup.sh client` non-interactively when automating. Use `--sudo-passless-check` to fail fast if passwordless sudo is unavailable.
-- You trust the management machine running the script, since it handles your SSH key and can execute privileged commands remotely.
-
-The script uses OpenSSH BatchMode (`-o BatchMode=yes`) so it will fail instead of prompting for passwords.
+For FIFO-specific checks: `ls -l /run/diy-sonos/snapfifo` and `sudo lsof /run/diy-sonos/snapfifo` during playback. The default path `/run/diy-sonos/snapfifo` needs no `fs.protected_fifos` sysctl; only a user-overridden `fifo_path` under `/tmp` or `/var/tmp` enables it via `/etc/sysctl.d/99-snapfifo.conf`.

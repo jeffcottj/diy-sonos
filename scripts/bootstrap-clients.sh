@@ -124,6 +124,7 @@ fi
 
 if [[ ! -f "$INVENTORY_PATH" ]]; then
   echo "Inventory file not found: $INVENTORY_PATH" >&2
+  echo "Hint: cp clients.example.yml clients.yml and edit." >&2
   exit 1
 fi
 

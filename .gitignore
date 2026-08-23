@@ -1,0 +1,5 @@
+.diy-sonos.generated.yml
+.diy-sonos-version
+clients.yml
+*.backup
+.DS_Store

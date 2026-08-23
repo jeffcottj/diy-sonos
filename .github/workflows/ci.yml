@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Bash syntax check
+        run: bash -n setup.sh install.sh configure.sh deploy.sh first-run.sh scripts/*.sh scripts/lib/ssh.sh tests/run-tests.sh
+
+      - name: Shellcheck (error severity)
+        run: shellcheck --severity=error --exclude=SC1091 setup.sh install.sh configure.sh deploy.sh first-run.sh scripts/*.sh scripts/lib/ssh.sh tests/run-tests.sh
+
+      - name: Validate config.yml
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 -c "import yaml; yaml.safe_load(open('config.yml'))"
+
+      - name: Run tests
+        run: bash tests/run-tests.sh

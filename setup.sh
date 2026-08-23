@@ -55,7 +55,13 @@ print_version_metadata() {
     if [[ -n "$release_meta" ]]; then
         echo "DIY Sonos version: ${release_meta}"
     else
-        echo "DIY Sonos version: ${embedded}"
+        local git_desc
+        git_desc="$(git -C "$SCRIPT_DIR" describe --tags --always 2>/dev/null || true)"
+        if [[ -n "$git_desc" ]]; then
+            echo "DIY Sonos version: ${git_desc}"
+        else
+            echo "DIY Sonos version: ${embedded}"
+        fi
     fi
 }
 
@@ -565,14 +571,14 @@ run_doctor_mode() {
         doctor_check_listener "$(cfg snapserver control_port 1780)" "snapserver" || failed=1
 
         echo "- FIFO checks"
-        doctor_check_fifo "$(cfg snapserver fifo_path /tmp/snapfifo)" || failed=1
+        doctor_check_fifo "$(cfg snapserver fifo_path /run/diy-sonos/snapfifo)" || failed=1
 
         echo "- FIFO activity check"
         local fifo_path
-        fifo_path="$(cfg snapserver fifo_path /tmp/snapfifo)"
+        fifo_path="$(cfg snapserver fifo_path /run/diy-sonos/snapfifo)"
         if [[ -p "$fifo_path" ]]; then
             local fifo_writers
-            fifo_writers=$(find /proc/*/fd -maxdepth 1 2>/dev/null -lname "$fifo_path" | wc -l || true)
+            fifo_writers=$(find /proc/*/fd -maxdepth 1 -lname "$fifo_path" 2>/dev/null | wc -l || true)
             if [[ "$fifo_writers" -gt 0 ]]; then
                 doctor_report pass "FIFO ${fifo_path} has ${fifo_writers} active file descriptor(s) — librespot is streaming."
             else

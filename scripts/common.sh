@@ -15,9 +15,10 @@ SNAPCAST_VER_DEFAULT="0.31.0"
 #   spotify.device_name -> SPOTIFY__DEVICE_NAME
 parse_config() {
     local yaml_file="$1"
-    local output
-    output=$(python3 - "$yaml_file" <<'PYEOF'
-import sys, yaml
+    while IFS= read -r -d '' var_name && IFS= read -r -d '' var_value; do
+        export "$var_name=$var_value"
+    done < <(python3 - "$yaml_file" <<'PYEOF'
+import sys, yaml, re
 
 def flatten(obj, prefix=""):
     items = {}
@@ -32,17 +33,21 @@ def flatten(obj, prefix=""):
 with open(sys.argv[1]) as f:
     data = yaml.safe_load(f)
 
+if data is None:
+    data = {}
+
 for k, v in flatten(data).items():
     shell_name = k.upper().replace("-", "_")
+    if not re.match(r'^[A-Z0-9_]+$', shell_name):
+        print(f"Warning: skipping invalid variable name: {shell_name}", file=sys.stderr)
+        continue
     if v is None:
         v = ""
     elif isinstance(v, bool):
         v = "true" if v else "false"
-    # Emit export statements
-    print(f"export {shell_name}={repr(str(v))}")
+    sys.stdout.buffer.write((shell_name + "\0" + str(v) + "\0").encode())
 PYEOF
 )
-    eval "$output"
 }
 
 
@@ -152,7 +157,8 @@ validate_server_ip() {
     fi
 
     local IFS='.'
-    local octets=($value)
+    local -a octets
+    read -ra octets <<< "$value"
     local octet
     for octet in "${octets[@]}"; do
         if ((octet < 0 || octet > 255)); then
@@ -288,7 +294,8 @@ install_deb() {
     local url="$1"
     local filename
     filename="$(basename "$url")"
-    local tmp="/tmp/$filename"
+    local tmp
+    tmp="$(mktemp "${TMPDIR:-/tmp}/${filename}.XXXXXX")"
 
     # Extract package name from filename (strip _version_arch.deb)
     local pkg_name
@@ -303,13 +310,20 @@ install_deb() {
         installed_ver="$(dpkg -s "$pkg_name" | awk '/^Version:/ {print $2}')"
     fi
 
-    echo "install_deb: pkg_name=$pkg_name installed_ver=${installed_ver:-<not-installed>} pkg_ver=$pkg_ver"
+    local stamp_file="/var/lib/diy-sonos/installed-debs/${pkg_name}"
+    local stamp_content=""
+    if [[ -f "$stamp_file" ]]; then
+        stamp_content="$(cat "$stamp_file" 2>/dev/null || true)"
+    fi
+
+    echo "install_deb: pkg_name=$pkg_name installed_ver=${installed_ver:-<not-installed>} pkg_ver=$pkg_ver stamp=${stamp_content:-<none>}"
+    if [[ -n "$installed_ver" && "$installed_ver" == "$pkg_ver" && "$stamp_content" == "$filename" ]]; then
+        echo "install_deb: decision=skip (installed version and stamp match repo package exactly)"
+        rm -f "$tmp"
+        return 0
+    fi
     if [[ -n "$installed_ver" ]]; then
-        if [[ "$installed_ver" == "$pkg_ver" ]]; then
-            echo "install_deb: decision=skip (installed version matches repo package exactly)"
-            return 0
-        fi
-        echo "install_deb: decision=install (installed version differs from repo package)"
+        echo "install_deb: decision=install (installed version or stamp differs from repo package)"
     else
         echo "install_deb: decision=install (package not currently installed)"
     fi
@@ -320,6 +334,8 @@ install_deb() {
     dpkg -i "$tmp"
     apt-get install -f -y   # fix any dependency issues
     rm -f "$tmp"
+    mkdir -p "$(dirname "$stamp_file")"
+    echo "$filename" > "$stamp_file"
 }
 
 # ---------------------------------------------------------------------------
@@ -355,20 +371,21 @@ ensure_dir() {
 }
 
 # download_file <url> <dest>
-# Downloads a file to dest, skipping if dest already exists.
+# Downloads a file to dest.
 # Removes partial file on failure.
 download_file() {
     local url="$1"
     local dest="$2"
-    if [[ -f "$dest" ]]; then
-        echo "File already downloaded: $dest"
-        return 0
-    fi
     if ! wget -q --show-progress --timeout=60 -O "$dest" "$url"; then
         rm -f "$dest"
         echo "Error: failed to download $url" >&2
         return 1
     fi
+}
+
+fifo_requires_protected_sysctl() {
+    local p="$1"
+    [[ "$p" == /tmp/* || "$p" == /var/tmp/* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -486,43 +503,6 @@ snapshot_file() {
 # Template rendering
 # ---------------------------------------------------------------------------
 
-# render_template <tmpl_file> <output_file>
-# Substitutes {{VAR}} placeholders with the current value of $VAR from the environment.
-# Writes atomically via a temp file so a failed write never leaves a truncated file.
-render_template() {
-    local tmpl="$1"
-    local out="$2"
-    python3 - "$tmpl" "$out" <<'PYEOF'
-import sys, os, re, tempfile
-
-tmpl_path, out_path = sys.argv[1], sys.argv[2]
-
-with open(tmpl_path) as f:
-    content = f.read()
-
-def replace(m):
-    var = m.group(1)
-    val = os.environ.get(var)
-    if val is None:
-        raise KeyError(f"Template variable not found in environment: {var}")
-    return val
-
-content = re.sub(r'\{\{([A-Z0-9_]+)\}\}', replace, content)
-
-tmp_fd, tmp_path = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(out_path)))
-try:
-    with os.fdopen(tmp_fd, 'w') as f:
-        f.write(content)
-    os.replace(tmp_path, out_path)
-except:
-    try: os.unlink(tmp_path)
-    except: pass
-    raise
-
-print(f"Rendered: {tmpl_path} -> {out_path}")
-PYEOF
-}
-
 # render_template_if_changed <tmpl_file> <output_file>
 # Like render_template but skips the write if the rendered content is identical
 # to the existing file. Returns 0 if the file was written (new or changed),
@@ -531,8 +511,8 @@ render_template_if_changed() {
     local tmpl="$1"
     local out="$2"
     local tmp
-    tmp="$(mktemp)"
-    python3 - "$tmpl" "$tmp" <<'PYEOF'
+    tmp="$(mktemp "$(dirname "$out")/.render.XXXXXX")"
+    if ! python3 - "$tmpl" "$tmp" <<'PYEOF'
 import sys, os, re
 
 tmpl_path, out_path = sys.argv[1], sys.argv[2]
@@ -552,6 +532,10 @@ content = re.sub(r'\{\{([A-Z0-9_]+)\}\}', replace, content)
 with open(out_path, 'w') as f:
     f.write(content)
 PYEOF
+    then
+        rm -f "$tmp"
+        return 1
+    fi
     if [[ -f "$out" ]] && diff -q "$out" "$tmp" > /dev/null 2>&1; then
         rm -f "$tmp"
         echo "Unchanged: $out"

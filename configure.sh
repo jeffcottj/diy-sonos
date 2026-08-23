@@ -7,132 +7,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.yml"
 
-# ---------------------------------------------------------------------------
-# Colour helpers
-# ---------------------------------------------------------------------------
-_fmt() { printf "\033[%sm%s\033[0m" "$1" "$2"; }
-green()  { _fmt "32" "$*"; }
-yellow() { _fmt "33" "$*"; }
-bold()   { _fmt "1"  "$*"; }
-red()    { _fmt "31" "$*"; }
-
+# shellcheck disable=SC2034
 SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
+# shellcheck disable=SC2034
 KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
 
-ensure_local_ssh_key() {
-    if [[ -f "$SSH_KEY_PATH" ]]; then
-        return 0
-    fi
+source "$SCRIPT_DIR/scripts/lib/ssh.sh"
 
-    echo "$(yellow "Local SSH key not found at $SSH_KEY_PATH")"
-    read -r -p "Generate a new ed25519 key now? [Y/n]: " generate_choice
-    generate_choice="${generate_choice:-Y}"
-
-    if [[ "$generate_choice" =~ ^[Yy]$ ]]; then
-        mkdir -p "$HOME/.ssh"
-        chmod 700 "$HOME/.ssh"
-        ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" >/dev/null
-        echo "$(green "Generated SSH key: $SSH_KEY_PATH")"
-        return 0
-    fi
-
-    echo "Please generate a key first: ssh-keygen -t ed25519 -f $SSH_KEY_PATH"
-    return 1
-}
-
-classify_ssh_error() {
-    local stderr_text="$1"
-
-    if [[ "$stderr_text" == *"Permission denied"* ]]; then
-        echo "auth_failed"
-    elif [[ "$stderr_text" == *"No route to host"* ]] || [[ "$stderr_text" == *"Connection timed out"* ]] || [[ "$stderr_text" == *"Connection refused"* ]] || [[ "$stderr_text" == *"Could not resolve hostname"* ]]; then
-        echo "host_unreachable"
-    elif [[ "$stderr_text" == *"Host key verification failed"* ]] || [[ "$stderr_text" == *"REMOTE HOST IDENTIFICATION HAS CHANGED"* ]]; then
-        echo "host_key_issue"
-    else
-        echo "unknown"
-    fi
-}
-
-print_ssh_fix_hint() {
-    local host="$1"
-    local ssh_user="$2"
-    local reason="$3"
-
-    case "$reason" in
-        auth_failed)
-            echo "    Fix: verify credentials and push key manually:"
-            echo "         ssh-copy-id ${ssh_user}@${host}"
-            ;;
-        host_unreachable)
-            echo "    Fix: verify host is online and SSH is enabled:"
-            echo "         ping -c 1 ${host}"
-            echo "         ssh ${ssh_user}@${host}"
-            ;;
-        host_key_issue)
-            echo "    Fix: remove stale host key and retry:"
-            echo "         ssh-keygen -R ${host}"
-            echo "         ssh-keyscan -H ${host} >> ~/.ssh/known_hosts"
-            ;;
-        *)
-            echo "    Fix: run verbose SSH check: ssh -vv ${ssh_user}@${host}"
-            ;;
-    esac
-}
-
-ensure_host_key_trusted() {
-    local host="$1"
-
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-    touch "$KNOWN_HOSTS_FILE"
-    chmod 600 "$KNOWN_HOSTS_FILE"
-
-    if ssh-keygen -F "$host" -f "$KNOWN_HOSTS_FILE" >/dev/null; then
-        return 0
-    fi
-
-    local scan_out
-    if ! scan_out="$(ssh-keyscan -T 5 -H "$host" 2>/dev/null)" || [[ -z "$scan_out" ]]; then
-        echo "$(red "Could not fetch SSH host key for $host via ssh-keyscan")"
-        return 1
-    fi
-
-    local fingerprint
-    fingerprint="$(printf '%s\n' "$scan_out" | ssh-keygen -lf - 2>/dev/null | awk 'NR==1{print $2}')"
-
-    echo "Host $host is new."
-    echo "  Fingerprint: ${fingerprint:-unknown}"
-    read -r -p "Trust this host key and add to known_hosts? [y/N]: " trust_choice
-    if [[ ! "$trust_choice" =~ ^[Yy]$ ]]; then
-        echo "Skipped host $host (untrusted host key)."
-        return 1
-    fi
-
-    printf '%s\n' "$scan_out" >> "$KNOWN_HOSTS_FILE"
-    echo "Added host key for $host to $KNOWN_HOSTS_FILE"
-}
-
-# ---------------------------------------------------------------------------
-# IP validation
-# ---------------------------------------------------------------------------
-validate_ipv4() {
-    local ip="$1"
-    if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-        return 1
-    fi
-    local IFS='.'
-    local -a octets=($ip)
-    local octet
-    for octet in "${octets[@]}"; do
-        if (( octet < 0 || octet > 255 )); then
-            return 1
-        fi
-    done
-    return 0
-}
-
-# ---------------------------------------------------------------------------
 # Read existing config.yml values (bash-only, no pyyaml needed)
 # ---------------------------------------------------------------------------
 read_existing_config() {
@@ -147,50 +28,27 @@ read_existing_config() {
         return
     fi
 
-    local in_clients=0
-    local current_client_ip=""
-    while IFS= read -r line; do
-        # Strip inline comments
-        local stripped="${line%%#*}"
+    local parsed
+    parsed="$(python3 "$SCRIPT_DIR/scripts/parse-network-config.py" "$CONFIG_FILE")" || return
 
-        # Top-level keys
-        if [[ "$stripped" =~ ^ssh_user:[[:space:]]*\"?([^\"[:space:]]+)\"? ]]; then
-            EXISTING_SSH_USER="${BASH_REMATCH[1]}"
-            if [[ -z "$EXISTING_SERVER_SSH_USER" ]]; then
-                EXISTING_SERVER_SSH_USER="${BASH_REMATCH[1]}"
-            fi
-        elif [[ "$stripped" =~ ^server_ip:[[:space:]]*\"?([^\"[:space:]]+)\"? ]]; then
-            EXISTING_SERVER_IP="${BASH_REMATCH[1]}"
-        elif [[ "$stripped" =~ ^server:[[:space:]]*$ ]]; then
-            in_clients=0
-        elif [[ "$stripped" =~ ^[[:space:]]+ssh_user:[[:space:]]*\"?([^\"[:space:]]+)\"? ]] && [[ -z "$current_client_ip" ]]; then
-            EXISTING_SERVER_SSH_USER="${BASH_REMATCH[1]}"
-        fi
+    EXISTING_CLIENT_IPS=()
+    # Clear associative array (declare above ensures it exists)
+    for k in "${!EXISTING_CLIENT_SSH_USERS[@]}"; do unset "EXISTING_CLIENT_SSH_USERS[$k]"; done
 
-        # Spotify device_name (indented)
-        if [[ "$stripped" =~ ^[[:space:]]+device_name:[[:space:]]*\"([^\"]+)\" ]]; then
-            EXISTING_DEVICE_NAME="${BASH_REMATCH[1]}"
-        elif [[ "$stripped" =~ ^[[:space:]]+device_name:[[:space:]]*([^[:space:]]+) ]]; then
-            EXISTING_DEVICE_NAME="${BASH_REMATCH[1]}"
-        fi
-
-        # clients list
-        if [[ "$stripped" =~ ^clients: ]]; then
-            in_clients=1
-            continue
-        fi
-        if (( in_clients )); then
-            if [[ "$stripped" =~ ^[[:alpha:]] && ! "$stripped" =~ ^clients: ]]; then
-                in_clients=0
-                current_client_ip=""
-            elif [[ "$stripped" =~ ^[[:space:]]*-[[:space:]]*ip:[[:space:]]*\"?([0-9.]+)\"? ]]; then
-                EXISTING_CLIENT_IPS+=("${BASH_REMATCH[1]}")
-                current_client_ip="${BASH_REMATCH[1]}"
-            elif [[ -n "$current_client_ip" ]] && [[ "$stripped" =~ ^[[:space:]]+ssh_user:[[:space:]]*\"?([^\"[:space:]]+)\"? ]]; then
-                EXISTING_CLIENT_SSH_USERS["$current_client_ip"]="${BASH_REMATCH[1]}"
-            fi
-        fi
-    done < "$CONFIG_FILE"
+    while IFS='=' read -r key val; do
+        case "$key" in
+            DEFAULT_SSH_USER) EXISTING_SSH_USER="$val" ;;
+            SERVER_IP) EXISTING_SERVER_IP="$val" ;;
+            SERVER_SSH_USER) EXISTING_SERVER_SSH_USER="$val" ;;
+            SPOTIFY_DEVICE_NAME) EXISTING_DEVICE_NAME="$val" ;;
+            CLIENT)
+                local ip="${val%%|*}"
+                local user="${val#*|}"
+                EXISTING_CLIENT_IPS+=("$ip")
+                EXISTING_CLIENT_SSH_USERS["$ip"]="$user"
+                ;;
+        esac
+    done <<< "$parsed"
 
     if [[ -z "$EXISTING_SERVER_SSH_USER" ]]; then
         EXISTING_SERVER_SSH_USER="${EXISTING_SSH_USER:-pi}"
@@ -369,20 +227,22 @@ write_config_yml() {
     shift 4
     local client_ips=("$@")
 
-    local bitrate="160"
+    local bitrate="320"
     local normalise="true"
-    local initial_volume="70"
+    local initial_volume="90"
     local codec="flac"
-    local buffer_ms="1200"
+    local buffer_ms="1000"
     local latency_ms="0"
     local output_volume="90"
 
     if [[ "$profile_preset" == "advanced" ]]; then
         bitrate="320"
-        initial_volume="75"
+        normalise="true"
+        initial_volume="90"
         codec="pcm"
         buffer_ms="800"
         latency_ms="-20"
+        output_volume="90"
     fi
 
     # Build clients YAML block
@@ -406,9 +266,6 @@ write_config_yml() {
 # ── Network ──────────────────────────────────────────────────────────────
 ssh_user: "${ssh_user}"           # SSH username used by deploy.sh
 server_ip: "${server_ip}"         # IP of the server device
-server:
-  ip: "${server_ip}"
-  ssh_user: "${ssh_user}"
 
 clients:                          # Speaker client IPs; used by deploy.sh
 ${clients_yaml}
@@ -427,7 +284,7 @@ profile_preset: "${profile_preset}"   # basic | advanced
 ${profile_role_section}
 
 snapserver:
-  fifo_path: "/tmp/snapfifo"
+  fifo_path: "/run/diy-sonos/snapfifo"  # named pipe between librespot and snapserver; keep outside /tmp
   sampleformat: "44100:16:2"      # Must match librespot output
   codec: "${codec}"                   # flac | pcm
   buffer_ms: ${buffer_ms}                 # End-to-end latency target

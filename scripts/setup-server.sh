@@ -25,7 +25,7 @@ detect_arch
 echo ""
 echo "--- Installing base dependencies ---"
 apt_update_if_stale
-pkg_install wget curl ca-certificates alsa-utils avahi-daemon
+pkg_install wget curl ca-certificates alsa-utils avahi-daemon gnupg
 
 echo ""
 echo "--- Ensuring avahi-daemon is enabled and running ---"
@@ -56,15 +56,23 @@ echo ""
 echo "--- Installing librespot (via raspotify repo) ---"
 
 RASPOTIFY_GPG="/usr/share/keyrings/raspotify_pub.gpg"
+RASPOTIFY_GPG_FINGERPRINT="2CC9B80F5AE2B7ACEFF2BA3209146F2F7953A455"
 RASPOTIFY_LIST="/etc/apt/sources.list.d/raspotify.list"
 
 if [[ ! -f "$RASPOTIFY_GPG" ]]; then
-    local tmp_key
     tmp_key="$(mktemp)"
-    if ! curl -fsSL --connect-timeout 30 "https://dtcooper.github.io/raspotify/key.asc" \
+    if ! curl --retry 3 -fsSL --connect-timeout 30 "https://dtcooper.github.io/raspotify/key.asc" \
             -o "$tmp_key"; then
         rm -f "$tmp_key"
         echo "Error: failed to download raspotify GPG key" >&2
+        exit 1
+    fi
+    actual="$(gpg --show-keys --with-colons "$tmp_key" | awk -F: '/^fpr:/ {print $10; exit}')"
+    if [[ "$actual" != "$RASPOTIFY_GPG_FINGERPRINT" ]]; then
+        echo "Error: raspotify GPG key fingerprint mismatch" >&2
+        echo "  Expected: $RASPOTIFY_GPG_FINGERPRINT" >&2
+        echo "  Actual:   ${actual:-<none>}" >&2
+        rm -f "$tmp_key"
         exit 1
     fi
     gpg --dearmor -o "$RASPOTIFY_GPG" < "$tmp_key"
@@ -128,13 +136,21 @@ echo ""
 echo "--- Creating audio FIFO ---"
 
 FIFO_PATH="$(cfg snapserver fifo_path)"
+OLD_FIFO="$(awk '$1=="p"{print $2; exit}' /etc/tmpfiles.d/snapfifo.conf 2>/dev/null || true)"
+if [[ -n "$OLD_FIFO" && "$OLD_FIFO" != "$FIFO_PATH" && -e "$OLD_FIFO" ]]; then
+    rm -f "$OLD_FIFO"
+    echo "Removed old FIFO: $OLD_FIFO"
+fi
 ensure_fifo "$FIFO_PATH"
 
+FIFO_DIR="$(dirname "$FIFO_PATH")"
 # systemd-tmpfiles.d entry so the FIFO is recreated after reboot
 snapshot_file /etc/tmpfiles.d/snapfifo.conf
 cat > /etc/tmpfiles.d/snapfifo.conf <<EOF
+d ${FIFO_DIR} 0755 root root - -
 p ${FIFO_PATH} 0660 root audio - -
 EOF
+systemd-tmpfiles --create /etc/tmpfiles.d/snapfifo.conf 2>/dev/null || true
 echo "Wrote /etc/tmpfiles.d/snapfifo.conf"
 
 # ---------------------------------------------------------------------------
@@ -143,14 +159,24 @@ echo "Wrote /etc/tmpfiles.d/snapfifo.conf"
 echo ""
 echo "--- Configuring sysctl for FIFO access ---"
 
-snapshot_file /etc/sysctl.d/99-snapfifo.conf
-cat > /etc/sysctl.d/99-snapfifo.conf <<EOF
+if fifo_requires_protected_sysctl "$FIFO_PATH"; then
+    snapshot_file /etc/sysctl.d/99-snapfifo.conf
+    cat > /etc/sysctl.d/99-snapfifo.conf <<EOF
 # Allow librespot to write to the FIFO in /tmp without being blocked
 # by the kernel's protected_fifos mechanism.
 fs.protected_fifos = 0
 EOF
-sysctl -p /etc/sysctl.d/99-snapfifo.conf
-echo "Applied fs.protected_fifos=0"
+    sysctl -p /etc/sysctl.d/99-snapfifo.conf
+    echo "Applied fs.protected_fifos=0"
+else
+    if [[ -f /etc/sysctl.d/99-snapfifo.conf ]]; then
+        snapshot_file /etc/sysctl.d/99-snapfifo.conf
+        rm -f /etc/sysctl.d/99-snapfifo.conf
+        echo "Removed /etc/sysctl.d/99-snapfifo.conf (not needed for $FIFO_PATH)"
+    fi
+    sysctl -w fs.protected_fifos=1 2>/dev/null || true
+    echo "Restored fs.protected_fifos=1 (default)"
+fi
 
 # ---------------------------------------------------------------------------
 # 7. Render snapserver config

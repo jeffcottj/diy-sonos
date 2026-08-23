@@ -5,118 +5,16 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="$SCRIPT_DIR/config.yml"
+# shellcheck disable=SC2088
 REMOTE_DIR="~/diy-sonos"
 
 SSH_OPTS=(-o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o BatchMode=yes)
+# shellcheck disable=SC2034
 SSH_KEY_PATH="$HOME/.ssh/id_ed25519"
+# shellcheck disable=SC2034
 KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
 
-# ---------------------------------------------------------------------------
-# Colour helpers
-# ---------------------------------------------------------------------------
-_fmt() { printf "\033[%sm%s\033[0m" "$1" "$2"; }
-green()  { _fmt "32" "$*"; }
-red()    { _fmt "31" "$*"; }
-yellow() { _fmt "33" "$*"; }
-bold()   { _fmt "1"  "$*"; }
-cyan()   { _fmt "36" "$*"; }
-
-ensure_local_ssh_key() {
-    if [[ -f "$SSH_KEY_PATH" ]]; then
-        return 0
-    fi
-
-    echo "$(yellow "Local SSH key not found at $SSH_KEY_PATH")"
-    read -r -p "Generate a new ed25519 key now? [Y/n]: " generate_choice
-    generate_choice="${generate_choice:-Y}"
-
-    if [[ "$generate_choice" =~ ^[Yy]$ ]]; then
-        mkdir -p "$HOME/.ssh"
-        chmod 700 "$HOME/.ssh"
-        ssh-keygen -t ed25519 -f "$SSH_KEY_PATH" -N "" >/dev/null
-        echo "$(green "Generated SSH key: $SSH_KEY_PATH")"
-        return 0
-    fi
-
-    echo "Please generate a key first: ssh-keygen -t ed25519 -f $SSH_KEY_PATH"
-    return 1
-}
-
-classify_ssh_error() {
-    local stderr_text="$1"
-
-    if [[ "$stderr_text" == *"Permission denied"* ]]; then
-        echo "auth_failed"
-    elif [[ "$stderr_text" == *"No route to host"* ]] || [[ "$stderr_text" == *"Connection timed out"* ]] || [[ "$stderr_text" == *"Connection refused"* ]] || [[ "$stderr_text" == *"Could not resolve hostname"* ]]; then
-        echo "host_unreachable"
-    elif [[ "$stderr_text" == *"Host key verification failed"* ]] || [[ "$stderr_text" == *"REMOTE HOST IDENTIFICATION HAS CHANGED"* ]]; then
-        echo "host_key_issue"
-    else
-        echo "unknown"
-    fi
-}
-
-print_ssh_fix_hint() {
-    local host="$1"
-    local ssh_user="$2"
-    local reason="$3"
-
-    case "$reason" in
-        auth_failed)
-            echo "    Fix: run ./configure.sh --copy-keys (or): ssh-copy-id ${ssh_user}@${host}"
-            ;;
-        host_unreachable)
-            echo "    Fix: verify network + ssh service:"
-            echo "         ping -c 1 ${host}"
-            echo "         ssh ${ssh_user}@${host}"
-            ;;
-        host_key_issue)
-            echo "    Fix: refresh known_hosts entry:"
-            echo "         ssh-keygen -R ${host}"
-            echo "         ssh-keyscan -H ${host} >> ~/.ssh/known_hosts"
-            ;;
-        *)
-            echo "    Fix: inspect verbose SSH output: ssh -vv ${ssh_user}@${host}"
-            ;;
-    esac
-}
-
-ensure_host_key_trusted() {
-    local host="$1"
-
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-    touch "$KNOWN_HOSTS_FILE"
-    chmod 600 "$KNOWN_HOSTS_FILE"
-
-    if ssh-keygen -F "$host" -f "$KNOWN_HOSTS_FILE" >/dev/null; then
-        return 0
-    fi
-
-    local scan_out
-    if ! scan_out="$(ssh-keyscan -T 5 -H "$host" 2>/dev/null)" || [[ -z "$scan_out" ]]; then
-        echo "$(red "FAILED")"
-        echo "    Reason: unable to pre-seed host key (host unreachable or SSH closed)"
-        echo "    Fix: ssh-keyscan -H ${host} >> ~/.ssh/known_hosts"
-        return 1
-    fi
-
-    local fingerprint
-    fingerprint="$(printf '%s\n' "$scan_out" | ssh-keygen -lf - 2>/dev/null | awk 'NR==1{print $2}')"
-
-    echo ""
-    echo "    New host key detected for ${host}"
-    echo "      Fingerprint: ${fingerprint:-unknown}"
-    read -r -p "    Confirm fingerprint and trust this host? [y/N]: " trust_choice
-    if [[ ! "$trust_choice" =~ ^[Yy]$ ]]; then
-        echo "$(red "FAILED")"
-        echo "    Reason: host key not confirmed"
-        return 1
-    fi
-
-    printf '%s\n' "$scan_out" >> "$KNOWN_HOSTS_FILE"
-    return 0
-}
+source "$SCRIPT_DIR/scripts/lib/ssh.sh"
 
 # ---------------------------------------------------------------------------
 # Parse config.yml via inline Python (no pyyaml needed on laptop)
@@ -128,67 +26,7 @@ parse_config() {
     fi
 
     local parsed
-    parsed="$(python3 - "$CONFIG_FILE" <<'PYEOF'
-import sys, re
-
-with open(sys.argv[1], encoding="utf-8") as f:
-    lines = f.readlines()
-
-server_ip = ""
-default_ssh_user = "pi"
-server_ssh_user = ""
-spotify_device_name = "DIY Sonos"
-client_entries = []
-
-in_clients = False
-in_spotify = False
-
-for line in lines:
-    stripped = line.split("#")[0].rstrip()
-
-    # Detect section transitions
-    if re.match(r"^[a-z]", stripped):
-        in_clients = stripped.startswith("clients:")
-        in_spotify = stripped.startswith("spotify:")
-
-    m = re.match(r'^server_ip:\s*"?([^"#\s]+)"?', stripped)
-    if m:
-        server_ip = m.group(1)
-
-    m = re.match(r'^ssh_user:\s*"?([^"#\s]+)"?', stripped)
-    if m:
-        default_ssh_user = m.group(1)
-
-    if in_spotify:
-        m = re.match(r'^\s*device_name:\s*"?([^"#]+?)"?\s*$', stripped)
-        if m:
-            spotify_device_name = m.group(1).strip()
-
-    if stripped.startswith('server:'):
-        in_clients = False
-
-    if stripped.startswith('  ssh_user:') and not in_clients:
-        m = re.match(r'^\s*ssh_user:\s*"?([^"#\s]+)"?', stripped)
-        if m:
-            server_ssh_user = m.group(1)
-
-    if in_clients:
-        m = re.match(r'^\s+-\s+ip:\s*"?([0-9.]+)"?', stripped)
-        if m:
-            client_entries.append([m.group(1), default_ssh_user])
-            continue
-        m = re.match(r'^\s+ssh_user:\s*"?([^"#\s]+)"?', stripped)
-        if m and client_entries:
-            client_entries[-1][1] = m.group(1)
-
-print(f"SERVER_IP={server_ip}")
-print(f"SSH_USER={default_ssh_user}")
-print(f"SERVER_SSH_USER={server_ssh_user or default_ssh_user}")
-print(f"SPOTIFY_DEVICE_NAME={spotify_device_name}")
-for ip, user in client_entries:
-    print(f"CLIENT={ip}|{user}")
-PYEOF
-)"
+    parsed="$(python3 "$SCRIPT_DIR/scripts/parse-network-config.py" "$CONFIG_FILE")"
 
     SERVER_IP=""
     SSH_USER="pi"
@@ -315,7 +153,7 @@ sync_repo() {
     if command -v rsync &>/dev/null; then
         local ssh_user
         ssh_user="$(ssh_user_for_host "$host")"
-        rsync -az \
+        rsync -az -e "ssh ${SSH_OPTS[*]}" \
             --exclude='.git' \
             --exclude='.diy-sonos.generated.yml' \
             "$SCRIPT_DIR/" \

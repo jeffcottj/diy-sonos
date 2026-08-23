@@ -3,7 +3,7 @@ Description=Snapcast server
 Documentation=https://github.com/badaix/snapcast
 After=network-online.target librespot.service
 Wants=network-online.target
-Requires=librespot.service
+Wants=librespot.service
 
 [Service]
 ExecStart=/usr/bin/snapserver --config=/etc/snapserver.conf
