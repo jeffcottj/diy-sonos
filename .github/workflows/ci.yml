@@ -2,29 +2,55 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, desktop-app]
   pull_request:
     branches: [main]
 
 jobs:
-  lint-test:
-    runs-on: ubuntu-latest
+  rust-frontend:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-      - name: Bash syntax check
-        run: bash -n setup.sh install.sh configure.sh deploy.sh first-run.sh scripts/*.sh scripts/lib/ssh.sh tests/run-tests.sh
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-      - name: Shellcheck (error severity)
-        run: shellcheck --severity=error --exclude=SC1091 setup.sh install.sh configure.sh deploy.sh first-run.sh scripts/*.sh scripts/lib/ssh.sh tests/run-tests.sh
-
-      - name: Validate config.yml
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
         run: |
-          python3 -m pip install --quiet pyyaml
-          python3 -c "import yaml; yaml.safe_load(open('config.yml'))"
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsoup-3.0-dev
 
-      - name: Run tests
-        run: bash tests/run-tests.sh
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Cargo fmt
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Cargo clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Cargo test
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Tauri build (no bundle)
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --no-bundle

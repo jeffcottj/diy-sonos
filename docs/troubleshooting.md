@@ -1,287 +1,192 @@
-# Troubleshooting (`setup.sh doctor`)
+# Troubleshooting
 
-Use this guide with:
+This guide is for the **DIY Sonos desktop app** (Tauri + Rust). The bash toolchain (`setup.sh`, `deploy.sh`, etc.) no longer exists. All orchestration — rendering configs, uploading via SFTP, running remote commands over SSH — is done by the app. Remote privileged actions remain ordinary shell commands (`apt-get`, `systemctl`, `amixer`, `journalctl`) that the app orchestrates; it doesn’t replace them.
+
+Device-side facts (services, FIFO, ports) are unchanged; only how you invoke them has moved from scripts to the app.
+
+## Quick way: the app
+
+- **Device detail → Doctor** — runs per-device health checks and returns `CheckResult { status: pass|fail|warn|info, message, explanation, remediation }`. Failures are “must-fix”, warns are optional. Remediation now says “Redeploy this device” instead of shell commands.
+- **Device detail → Deploy log** — live `deploy-log {deviceId, step, level, line}` + `deploy-status {deviceId, phase, done}` per device.
+- **Connect Spotify** panel — handles the OAuth tunnel automatically (no manual `ssh -L`).
+
+If you prefer manual SSH, `ssh <user>@<host>` and use the commands below; they’re the same ones the app runs via `sudo -S -p ''`.
+
+## Services
+
+| Device | Expected units |
+|--------|---------------|
+| Server | `librespot.service` (After=librespot, Wants=librespot), `snapserver.service`, `avahi-daemon.service` |
+| Client | `snapclient.service`, `diy-sonos-alsa-volume.service` (+ `alsa-restore.service` or `alsa-state.service`) |
+
+Check via SSH:
 
 ```bash
-sudo ./setup.sh doctor server
-sudo ./setup.sh doctor client
+systemctl status librespot snapserver avahi-daemon --no-pager -l
+systemctl status snapclient --no-pager -l
+systemctl is-enabled librespot snapserver snapclient avahi-daemon
+systemctl is-active librespot snapserver snapclient avahi-daemon
+sudo journalctl -u librespot -u snapserver -u snapclient -p err -n 15 --no-pager
 ```
 
-Doctor output includes severity labels:
-
-- **must-fix**: blocks normal playback; fix before continuing.
-- **optional**: does not always block playback, but can cause degraded behavior or missing diagnostics.
+If a service is not active/enabled/installed, use **Redeploy this device** in the app (re-renders `*.service` units if-changed, `daemon-reload`, enable + restart only if configs changed). The doctor’s remediation will say “Redeploy”.
 
 ## Network / DNS failures
 
-### Symptoms
+Preflight or deploy fails with DNS errors, or GitHub download fails.
 
-- Preflight fails with DNS lookup errors (e.g., `Cannot resolve github.com`).
-- Preflight fails HTTPS reachability checks.
-
-### Why it matters
-
-Package installs, Spotify auth, and GitHub download/update paths all require working network and DNS.
-
-### Suggested command
+- App preflight does `SSH → cat /etc/os-release` + `uname -m` and checks package lists freshness (`/var/lib/apt/periodic/update-success-stamp` < 1h else `apt-get update`).
+- Manual check:
 
 ```bash
 resolvectl status
-```
-
-If DNS is broken, set a known resolver (example):
-
-```bash
+# if broken:
 sudo resolvectl dns eth0 1.1.1.1 8.8.8.8
+nc -vz github.com 443
 ```
-
-## Service not running
-
-### Symptoms
-
-Doctor shows one of these as **must-fix**:
-
-- `librespot.service is not active`
-- `snapserver.service is not active`
-- `snapclient.service is not active`
-- service not enabled/installed
-
-### Why it matters
-
-If the relevant service is stopped, that part of the audio pipeline is down.
-
-### Suggested command
-
-```bash
-sudo systemctl restart <service>
-```
-
-Then inspect errors:
-
-```bash
-sudo journalctl -u <service>.service -p err -n 50 --no-pager
-```
-
-## Audio device mismatch
-
-### Symptoms
-
-Doctor client run shows:
-
-- `Resolved audio device was not matched exactly in 'aplay -L'` (**optional**)
-- or playback is silent / comes from unexpected output
-
-### Why it matters
-
-Your configured `snapclient.audio_device` may not match an actual ALSA output on that host.
-
-### Suggested command
-
-```bash
-aplay -l && aplay -L
-```
-
-Use the output to pick a valid device, then update config and redeploy/restart.
 
 ## Snapserver connectivity
 
-### Symptoms
-
-Doctor client run shows **must-fix**:
-
-- `Cannot connect to snapserver at <server_ip>:1704`
-
-### Why it matters
-
-Client cannot receive the synchronized audio stream from the server.
-
-### Suggested command
+Doctor checks listeners via `ss -ltnp` for `0.0.0.0:1704` and `0.0.0.0:1780`. If fail:
 
 ```bash
-nc -vz <server_ip> 1704
+sudo ss -ltnp | grep -E ':(1704|1780)\b'
+sudo systemctl status snapserver --no-pager -l
 ```
 
-If it fails, verify server is up, `snapserver` is active, and no firewall blocks TCP/1704.
+Client → server stream is TCP 1704; control is 1780. Verify no firewall blocks them. Redeploy server.
 
-## Device not visible in Spotify
+## FIFO
 
-### Symptoms
+Default path `/run/diy-sonos/snapfifo`. Doctor checks `[[ -p /run/diy-sonos/snapfifo ]]`.
 
-- Spotify Connect app does not show your DIY Sonos device name.
-- Server appears healthy otherwise, but discovery is intermittent or absent.
+- FIFO is created via `mkfifo`, persisted via `/etc/tmpfiles.d/snapfifo.conf`:
 
-### Why it matters
+```
+d /run/diy-sonos 0755 root root - -
+p /run/diy-sonos/snapfifo 0660 root audio - -
+```
 
-Spotify Connect discovery on local networks depends on mDNS/zeroconf advertisements. If `avahi-daemon` is not active, the device may not be discoverable by Spotify clients.
+run `systemd-tmpfiles --create` immediately.
 
-### Suggested command
+- If `snapserver.fifo_path` is overridden under `/tmp` or `/var/tmp`, the app writes `fs.protected_fifos=0` via `/etc/sysctl.d/99-snapfifo.conf` else removes it and restores `=1`.
+
+Manual checks:
 
 ```bash
-sudo systemctl status avahi-daemon --no-pager
+ls -l /run/diy-sonos/snapfifo
+file /run/diy-sonos/snapfifo   # should be FIFO
+sudo lsof /run/diy-sonos/snapfifo || true  # shows writer/reader during playback
+cat /etc/tmpfiles.d/snapfifo.conf
+cat /etc/sysctl.d/99-snapfifo.conf 2>/dev/null || echo "no sysctl override"
 ```
 
-If inactive, fix as **must-fix** before retrying Spotify discovery:
+If FIFO missing, redeploy server.
+
+## Audio device mismatch (clients)
+
+Doctor warns if resolved audio device is `default`. On modern Pi OS, `default` is PipeWire-backed and won’t work in a system service.
+
+Resolution is the same logic as `detect_alsa_usb_device` in the old `common.sh` (first `USB-Audio` driver card → `plughw:<name>,0`; else first non-HDMI card; else `default` with loud warning):
 
 ```bash
-sudo systemctl enable avahi-daemon
-sudo systemctl restart avahi-daemon
-sudo journalctl -u avahi-daemon -n 50 --no-pager
+cat /proc/asound/cards
+aplay -l
+aplay -L | head -n 80
 ```
 
+Pick a valid device (e.g., `plughw:Device,0` or `hw:1,0`) and set it per-client in **Settings → Clients → audio_device** (or globally via `snapclient.audio_device` if `auto` should detect correctly). Then redeploy that client. The app also sets ALSA volume via `amixer` + `alsactl store` and installs `/etc/systemd/system/diy-sonos-alsa-volume.service` + `/usr/local/bin/diy-sonos-apply-volume` for boot restore.
 
-## Volume controls: Spotify vs client hardware
+Test locally:
 
-If volume behavior is confusing, verify both settings:
+```bash
+speaker-test -t wav -c 2 -D plughw:1,0
+amixer scontrols; amixer get Master; amixer get PCM
+```
 
-- `spotify.initial_volume` sets the starting playback volume for librespot (server-side stream volume).
-- `snapclient.output_volume` sets each client's ALSA hardware mixer output percent during `setup.sh client`.
+## Volume
 
-A practical pattern is to keep `snapclient.output_volume` at a safe fixed baseline per speaker, then adjust `spotify.initial_volume` for how loud playback starts in Spotify Connect.
+- Per-client `output_volume` (0-100) is resolved as: per-client override for that IP if valid, else global `snapclient.output_volume`, else `90` on invalid. The app sets it via `amixer` and persists via `alsactl store` + the boot restore service.
+- Spotify initial volume (`spotify.initial_volume`) is the librespot starting volume; normalise flag maps to `--enable-volume-normalisation` or empty.
 
-## ALSA mixer state not persisting across reboot
+## Spotify not visible / OAuth
 
-### Symptoms
+If “DIY Sonos” doesn’t appear in Spotify:
 
-- `setup.sh client` sets expected volume, but after reboot speaker volume returns to an unexpected level.
-- `setup.sh doctor client` warns that `alsa-restore.service` / `alsa-state.service` is not enabled or active.
+1. In the app, open **Connect Spotify** (or `start_oauth` via command). The app restarts `librespot.service` and polls `journalctl -u librespot --no-pager -n 400` for the last `https://accounts\.spotify\.com/[^ ]+` URL, starts a local port-forward (`127.0.0.1:4000` → device `127.0.0.1:4000` via russh `direct-tcpip`), opens the URL in your browser (via `tauri-plugin-opener`), and emits `oauth-url {url}` events until credentials appear in `cache_dir` (`/var/cache/librespot/*credentials*` or `*.json` via `ls` glob). No manual `ssh -L` needed.
 
-### Why it matters
+2. Manual check (SSH to server):
 
-ALSA mixer persistence depends on both `alsactl store` writing state and a restore unit loading that state at boot.
+```bash
+systemctl status librespot --no-pager -l
+journalctl -u librespot --no-pager -n 400 | grep -Eo 'https://accounts\.spotify\.com/[^ ]+' | tail -n 1
+ls -l /var/cache/librespot/*credentials* /var/cache/librespot/*.json 2>&1 | head
+cat /etc/systemd/system/librespot.service | grep ExecStart
+```
 
-### Suggested commands
+If `avahi-daemon` is inactive, Spotify may not discover the device:
+
+```bash
+systemctl status avahi-daemon --no-pager
+sudo systemctl enable --now avahi-daemon
+```
+
+## ALSA mixer state not persisting
+
+After reboot, volume resets:
 
 ```bash
 sudo alsactl store
-sudo systemctl enable --now alsa-restore.service
+sudo systemctl enable --now alsa-restore.service  # or alsa-state.service
 ```
 
-If your distro ships `alsa-state.service` instead:
-
-```bash
-sudo systemctl enable --now alsa-state.service
-```
-
-### USB card renumbering caveat
-
-Even with persistence enabled, USB sound devices can still be renumbered (for example, `card 1` becoming `card 2`) after hardware changes or boot-order differences. If your playback config references numeric cards (like `hw:1,0`), mixer state may apply to the wrong device.
-
-Prefer stable ALSA card names when possible (for example `plughw:Device,0`), and if needed create ALSA aliases / udev-based naming so your target USB DAC keeps a consistent logical name across reboots.
+Even with persistence, USB card renumbering can break `hw:1,0` references; prefer stable `plughw:<name>,0` or ALSA aliases/udev naming.
 
 ## Collecting diagnostics to share
 
-If Spotify shows your DIY Sonos device and playback appears to progress, but you hear no audio, collect the following diagnostics.
+Via the app: **Device detail → Doctor** and **Deploy log** → copy output.
 
-### 1. Deployment and config context (laptop)
-
-Run from your laptop in the repo:
+Via SSH (if asked):
 
 ```bash
-./setup.sh version
-./setup.sh preflight server --advisory
-./setup.sh preflight client --advisory
-sed -n '1,220p' config.yml
-test -f .diy-sonos.generated.yml && sed -n '1,260p' .diy-sonos.generated.yml
-```
+# Server
+systemctl status librespot snapserver avahi-daemon --no-pager -l
+journalctl -u librespot -n 200 --no-pager
+journalctl -u snapserver -n 200 --no-pager
+ss -ltnp | grep -E ':(1704|1780)\b'
+ls -l /run/diy-sonos/snapfifo; cat /etc/tmpfiles.d/snapfifo.conf; cat /etc/snapserver.conf
+systemctl cat librespot; systemctl cat snapserver
 
-If you used guided setup, also share the terminal output from:
-
-```bash
-./first-run.sh
-```
-
-### 2. Server-side diagnostics
-
-SSH into the server and run:
-
-```bash
-sudo systemctl status librespot snapserver avahi-daemon --no-pager -l
-sudo journalctl -u librespot -n 200 --no-pager
-sudo journalctl -u snapserver -n 200 --no-pager
-sudo ./setup.sh doctor server
-sudo ss -ltnp | rg ':(1704|1780)\b'
-```
-
-Then verify the Spotify audio path:
-
-```bash
-# FIFO should exist
-ls -l /run/diy-sonos/snapfifo
-
-# During active Spotify playback this should show at least one writer/reader
-sudo lsof /run/diy-sonos/snapfifo || true
-
-# Confirm effective units and binaries
-systemctl cat librespot
-systemctl cat snapserver
-```
-
-### 3. Client-side diagnostics (each client)
-
-On each client:
-
-```bash
-sudo systemctl status snapclient --no-pager -l
-sudo journalctl -u snapclient -n 200 --no-pager
-sudo ./setup.sh doctor client
+# Each client
+systemctl status snapclient --no-pager -l
+journalctl -u snapclient -n 200 --no-pager
+aplay -l; aplay -L | head -n 80
 systemctl cat snapclient
 ```
 
-Audio device checks:
-
-```bash
-aplay -l
-aplay -L | head -n 80
-speaker-test -t wav -c 2 -D "$(awk '/--soundcard/{print $2; exit}' /etc/systemd/system/snapclient.service)" || true
-```
-
-If `speaker-test -D default` fails, retry with a concrete ALSA device shown by `aplay -l`, for example `plughw:1,0`.
-
-### Minimal bundle to share with an agent
-
-Please paste or attach:
-
-1. `config.yml` and `.diy-sonos.generated.yml` (if present)
-2. Output of:
-   - `sudo ./setup.sh doctor server`
-   - `sudo ./setup.sh doctor client` (from each client)
-   - `sudo systemctl status librespot snapserver snapclient --no-pager -l`
-   - `sudo journalctl -u librespot -u snapserver -u snapclient -n 200 --no-pager`
-3. `systemctl cat librespot`, `systemctl cat snapserver`, and `systemctl cat snapclient`
-4. `aplay -l` and `speaker-test` command/results per client
-5. Exact timestamp when you started Spotify playback and for how long (e.g., "played from 20:14:10 to 20:14:45")
-
-That timestamp helps correlate journal logs quickly.
+Also share `~/.config/dev.jeffcottj.diy-sonos/config.yml` (the app’s config) and the timestamp when you started Spotify playback.
 
 ## Common failure signatures
 
-### A) `librespot` logs show `Broken pipe (os error 32)`
+### A) librespot logs `Broken pipe (os error 32)`
 
-This usually means the FIFO consumer is missing (snapserver not running/connected to FIFO) while librespot writes.
+FIFO consumer missing (snapserver not running). Check `snapserver.service` active, `librespot.service` uses `--backend pipe --device /run/diy-sonos/snapfifo`, `/etc/snapserver.conf` has `source = pipe:///run/diy-sonos/snapfifo?...`. Redeploy server.
 
-Check:
+### B) Client active but silent
 
-- `snapserver.service` is active on the server.
-- Server+client hosts did **not** accidentally mask/stop snapserver while configuring client role.
-- `/etc/systemd/system/librespot.service` uses `--backend pipe --device /run/diy-sonos/snapfifo`.
-- `/etc/snapserver.conf` uses `source = pipe:///run/diy-sonos/snapfifo?...`.
+Usually ALSA device mismatch — `snapclient.service` `--soundcard` is `default` or wrong. Check `aplay -l` and redeploy with correct per-client `audio_device`.
 
-> **Note on `fs.protected_fifos`:** The default FIFO path `/run/diy-sonos/snapfifo` needs no sysctl change. Only a user-overridden `fifo_path` under `/tmp` or `/var/tmp` triggers the `fs.protected_fifos=0` sysctl via `/etc/sysctl.d/99-snapfifo.conf`.
+### C) One client works with speaker-test but not Spotify
 
-### B) Client service active but silent output
+Local audio OK, stream path broken: check server FIFO `lsof`, snapserver logs for connect/disconnect, client snapclient logs for decode errors. Redeploy server and client.
 
-Usually ALSA device mismatch.
+### Ports
 
-Check:
+| Port | Purpose |
+|------|---------|
+| 1704 | Snapcast audio stream (server → clients, TCP) |
+| 1780 | Snapcast HTTP control API (WebSocket JSON-RPC) |
+| 4000 | librespot OAuth callback (`spotify.oauth_callback_port`) |
+| 5353 | mDNS via avahi (Spotify discovery) |
 
-- `--soundcard` in `snapclient.service` is a real device (`plughw:X,Y` or `hw:X,Y`), not `default`.
-- `speaker-test` succeeds with that same device.
-- Mixer volume is not muted (`alsamixer` / `amixer`).
-
-### C) One client works with `speaker-test` but not Spotify
-
-Then local audio hardware is likely okay. Focus on stream path:
-
-- Server FIFO activity during playback (`lsof /run/diy-sonos/snapfifo`).
-- Server `snapserver` logs for repeated connect/disconnect errors.
-- Client `snapclient` logs for stream/connect/decode errors.
+All references to `./setup.sh doctor`, `./deploy.sh`, `./first-run.sh`, and `config.yml` in the repo root now map to GUI flows: doctor = app’s Doctor, deploy = app’s Deploy (with live log), config = Settings UI (stored at `app_config_dir()/config.yml`).

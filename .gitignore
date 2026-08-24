@@ -3,3 +3,16 @@
 clients.yml
 *.backup
 .DS_Store
+
+# Tauri / Rust
+/src-tauri/target/
+/src-tauri/Cargo.lock
+
+# Frontend
+/node_modules/
+/dist/
+/.vite/
+
+# OS
+Thumbs.db
+src-tauri/gen/

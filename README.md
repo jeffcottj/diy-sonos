@@ -1,6 +1,6 @@
 # DIY Sonos
 
-Turn small Linux devices into a Sonos-like synchronized multi-room audio system. A server device runs Spotify Connect and streams audio; client devices play back in perfect sync via USB DACs.
+Turn small Linux devices into a Sonos-like synchronized multi-room audio system. A server device runs Spotify Connect and streams audio; client devices play back in perfect sync via USB DACs. Now with a cross-platform desktop app (Windows/macOS/Linux) that replaces the old bash toolchain.
 
 Tested hardware: Raspberry Pi 5 (server) and Raspberry Pi Zero 2 W units (clients).
 
@@ -20,472 +20,113 @@ snapserver  (server device — encodes FLAC, streams over TCP 1704)
     │
     ├──────────────────────────┐
     ▼                          ▼
-snapclient (client device)  snapclient (client device)  ...
+snapclient (client)        snapclient (client)  ...
     │                          │
   ALSA → USB DAC          ALSA → USB DAC
-    │                          │
- Speaker                    Speaker
 ```
 
-## Hardware Requirements
+## Download & Install
 
-| Device | Role | Notes |
-|--------|------|-------|
-| Linux-capable device (e.g., Raspberry Pi 5) | Server | Runs librespot + snapserver |
-| Linux-capable device (×N, e.g., Raspberry Pi Zero 2 W) | Clients | One per room |
-| USB audio DAC dongle (×N) | Audio output | One per client device |
-| USB speakers / 3.5mm speakers | Output | Per room |
+Latest release: **GitHub Releases** — `https://github.com/jeffcottj/diy-sonos/releases/latest`
 
-All devices must be on the same local network.
+| OS | Installer | Notes |
+|----|-----------|-------|
+| Windows 10/11 | `DIY_Sonos_x.y.z_x64-setup.exe` (NSIS) | WebView2 is downloaded via bootstrapper if missing |
+| macOS (Intel + Apple Silicon) | `DIY_Sonos_x.y.z_universal.dmg` | Drag to Applications. Universal binary (aarch64 + x86_64) |
+| Linux | `DIY_Sonos_x.y.z_amd64.AppImage` or `diy-sonos_x.y.z_amd64.deb` | AppImage is portable; deb installs via `sudo dpkg -i` |
 
-## Prerequisites
+The app is **unsigned** (public GitHub Releases, no Apple Developer ID / EV cert). Tauri updater uses its own minisign keys (`latest.json` is signed; the app verifies updates independently). The OS will warn on first launch:
 
-- All devices must have SSH key authentication set up so `deploy.sh` can connect without a password prompt.
-- You must know the IP address for each device you want to configure.
-- Laptop: `python3` is required (laptop scripts parse `config.yml` via `scripts/parse-network-config.py`, stdlib only — no `pyyaml` needed). Also need `ssh`, `ssh-copy-id`, `rsync`.
+- **macOS Gatekeeper**: Finder → Right-click `DIY Sonos.app` → **Open** → **Open** in the dialog. Subsequent launches work normally. Or: System Settings → Privacy & Security → **Open Anyway**.
+- **Windows SmartScreen**: “Windows protected your PC” → **More info** → **Run anyway**.
 
----
+Updates: the app checks `https://github.com/jeffcottj/diy-sonos/releases/latest/download/latest.json` via `tauri-plugin-updater`. When an update is available you’ll see a prompt; it installs on restart.
 
-## Quick Start
+## First-run wizard
 
-Need help diagnosing setup or runtime issues? See [Troubleshooting](docs/troubleshooting.md).
+Open the app:
 
-### Primary path: one-command guided setup
+1. **Add server & clients** — Enter the IP for each Pi manually, or click **Scan network** to browse `_ssh._tcp.local` via mDNS (5 s). Hosts matching `raspberrypi|raspi|pi|dietpi|ubuntu` get a “likely Pi” badge; click a result to prefill.
+   - First connect asks for SSH username + password. The app generates its own ed25519 keypair (`app_data_dir()/id_ed25519`, 0600) and installs the public key into `~/.ssh/authorized_keys` on the device (like `ssh-copy-id`). The first host key is shown as `SHA256:…`; confirm to trust (TOFU, stored in `app_data_dir()/known_hosts`). A later mismatch is a hard error.
+   - Sudo runs as `sudo -S -p ''` with the password fed over stdin per command; password is held in memory only during the operation, never written to disk. Passwordless-sudo devices work transparently.
 
-After install/clone, run:
+2. **Audio profile** — Choose `basic` (flac, buffer 1000 ms, latency 0) or `advanced` (pcm, buffer 800 ms, latency -20). This sets `snapserver.codec`, `snapserver.buffer_ms`, and `snapclient.latency_ms`. You can change it later in Settings.
 
-```bash
-./first-run.sh
-```
+3. **Deploy** — One-click deploy. The app:
+   - Preflights SSH to all devices (fail fast)
+   - Deploys the server role (or combo server+client) → surfaces **Connect Spotify** → deploys each client in sequence → shows pass/fail summary
+   - Streams live logs per device (`deploy-log {deviceId, step, level, line}`) and step checklist (`deploy-status {deviceId, phase, done}`)
 
-This guided script walks you through the complete first-time flow:
-1. Local dependency check (`ssh`, `ssh-copy-id`, `python3`, `rsync`)
-2. Interactive config collection (`./configure.sh`)
-3. SSH key setup (`./configure.sh --copy-keys`)
-4. Connectivity check (key-based SSH to all configured hosts)
-5. Deployment (`./deploy.sh`)
-6. Final Spotify “what to do next” summary
+4. **Connect Spotify** — If credentials are already cached (`/var/cache/librespot/*credentials*` or `*.json`), the step is skipped. Otherwise the app:
+   - Restarts `librespot.service` on the server
+   - Polls `journalctl -u librespot --no-pager -n 400` for the last `https://accounts\.spotify\.com/[^ ]+` URL
+   - Starts a local port-forward (`127.0.0.1:4000` on the laptop → `127.0.0.1:4000` on the device via russh `direct-tcpip`) and opens the URL in your default browser
+   - Emits `oauth-url {url}` events until credentials appear, then stops the forward
 
----
+5. **Play** — Open Spotify on any device and select **“DIY Sonos”**. The dashboard shows stream idle/playing state (audio pipe provides no track metadata — don’t hunt for it).
 
-## Manual path (step-by-step)
+## Using the app
 
-If you prefer to run each step explicitly — or to automate via `--preset` — use this path.
+- **Devices** tab — Current config (`server_ip`, `ssh_user`, client list). Add/edit devices, re-run deploys, view per-device doctor results and deploy logs.
+- **Dashboard** tab — Live Snapcast control. The frontend opens `new WebSocket("ws://<server_ip>:1780/jsonrpc")` directly, sends `Server.GetStatus`, and keeps state live from notifications (`Client.OnConnect/OnDisconnect/OnVolumeChanged/...`, `Group.OnMute/OnStreamChanged`, `Server.OnUpdate`). Controls:
+  - Per-client: volume slider (`Client.SetVolume`), mute, latency (`Client.SetLatency`), rename (`Client.SetName` seeded from `clients[].name`)
+  - Per-group: group mute (`Group.SetMute`), drag/toggle clients between groups (`Group.SetClients`), delete stale clients (`Server.DeleteClient`)
+  - Badges: client online/offline (`Client.OnConnect/OnDisconnect`), stream idle/playing from `stream.status`
+  - Clients are matched to app devices by `client.host.ip`
+  - If Snapcast or the webview rejects the cross-origin WebSocket (Origin check), the Rust fallback in `snapcast.rs` (tokio-tungstenite) bridges via Tauri events — same store shape.
 
-### 1. Install from release (recommended)
+- **Settings** tab — All `config.yml` fields (profile, spotify/snapserver/snapclient sections, per-client `name`/`latency_ms`/`audio_device`). Changes that affect rendered files prompt **Apply changes** → re-run deploy for affected devices.
+  - Config is stored at `app_config_dir()/config.yml` (`dev.jeffcottj.diy-sonos`) via `serde_yaml`. Comments are not preserved (the UI replaces hand-editing; see schema in Settings).
+  - Device passwords are never persisted; the app key is the only credential stored.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/jeffcottj/diy-sonos/main/install.sh | bash -s -- --install-dir "$HOME/diy-sonos"
-```
+## Device-side facts (what the app manages)
 
-This installer resolves the latest tagged release, downloads the tarball, preserves existing local config files (`config.yml`, `.diy-sonos.generated.yml`, `clients.yml`) during upgrades, writes release metadata to `.diy-sonos-version`, and then offers to run the guided setup wizard.
-Re-running `install.sh` is safe: the release payload is replaced, then preserved local config files are restored automatically.
-
-To pin a specific release tag or re-install safely:
-
-```bash
-./install.sh --tag v0.1.0
-```
-
-To keep persistent snapshots of existing `config.yml` files before reinstalling:
-
-```bash
-./install.sh --tag v0.1.0 --backup-dir "$HOME/diy-sonos-install-backups"
-```
-
-#### If this command fails
-
-Use one of these fallback paths:
-
-1. Clone and run init:
-
-```bash
-git clone https://github.com/jeffcottj/diy-sonos.git
-cd diy-sonos
-./setup.sh init
-```
-
-2. Download a release tarball manually and run init:
-
-```bash
-TAG="v0.1.0"
-curl -fL "https://github.com/jeffcottj/diy-sonos/archive/refs/tags/${TAG}.tar.gz" -o diy-sonos.tar.gz
-mkdir -p diy-sonos && tar -xzf diy-sonos.tar.gz --strip-components=1 -C diy-sonos
-cd diy-sonos
-./setup.sh init
-```
-
-### 2. Configure from your laptop
-
-Run the interactive wizard on your laptop to collect IPs and write `config.yml`:
-
-```bash
-./configure.sh
-```
-
-```
-DIY Sonos — Setup Wizard
-
-Speaker system name (shown in Spotify) [DIY Sonos]: Living Room
-Server device IP: 192.168.1.100
-SSH username on each device [pi]:
-
-Enter client device IPs one at a time. Press Enter with no input when done.
-  Client IP: 192.168.1.121
-  Client IP: 192.168.1.122
-  Client IP:
-
-Configuration summary:
-  System name : Living Room
-  Server IP   : 192.168.1.100
-  SSH user    : pi
-  Clients     : 192.168.1.121 192.168.1.122
-Write config.yml? [Y/n]:
-
-✓ config.yml written.
-```
-
-Then set up SSH keys (one-time):
-
-```bash
-./configure.sh --copy-keys
-```
-
-#### Alternative: non-interactive preset (fastest path)
-
-Use the beginner preset to generate `.diy-sonos.generated.yml` with only the essentials:
-
-- server IP
-- one or more client IPs
-- optional speaker name
-
-All advanced audio values are auto-filled (bitrate, codec, buffer, audio auto-detect).
-
-```bash
-./setup.sh init --preset basic
-```
-
-Non-interactive example:
-
-```bash
-./setup.sh init --preset basic --server-ip 192.168.1.100 --client-ips 192.168.1.121,192.168.1.122 --device-name "Living Room"
-```
-
-### 3. Deploy everything from your laptop
-
-```bash
-./deploy.sh
-```
-
-`deploy.sh` will:
-1. Verify SSH connectivity to all devices (fails fast before touching anything)
-2. Rsync this repo to the server device and run `sudo ./setup.sh server`
-3. Surface the Spotify OAuth URL (or print fallback instructions if not found)
-4. Rsync to each client device and run `sudo ./setup.sh client`
-5. Print a pass/fail summary table
-
-### 4. Open Spotify
-
-Select your speaker system from the Spotify device list. Music plays on all speakers in sync.
-
----
-
-## Operating an install
-
-### Upgrade an existing install
-
-Use upgrade mode to re-run idempotent package/service setup for the configured role while preserving your existing config files:
-
-```bash
-sudo ./setup.sh upgrade
-```
-
-You can override role detection explicitly:
-
-```bash
-sudo ./setup.sh upgrade --role server
-sudo ./setup.sh upgrade --role client
-```
-
-### Preflight checks (optional but recommended)
-
-```bash
-./setup.sh preflight server
-./setup.sh preflight client
-```
-
-Preflight validates required binaries (`apt-get`, `systemctl`), network reachability, supported OS/arch, and key config values before install. `setup.sh server|client` runs this automatically and aborts early if checks fail.
-
-### Runtime health checks (doctor)
-
-```bash
-sudo ./setup.sh doctor server
-sudo ./setup.sh doctor client
-```
-
-Doctor reports service states, key ports/listeners, FIFO presence on server, resolved audio device on client, and recent error excerpts from systemd journals. Failed checks include recommended remediation commands.
-
-### Retry safety and recovery
-
-Safe-to-rerun commands:
-
-```bash
-./deploy.sh
-sudo ./setup.sh upgrade
-sudo ./setup.sh doctor server
-sudo ./setup.sh doctor client
-```
-
-- `deploy.sh`: re-syncs repository contents and re-runs setup on each host. It is designed for retries after transient network/auth failures.
-- `setup.sh upgrade`: detects role and re-applies package + config setup idempotently.
-- `setup.sh doctor`: read-only health checks, no configuration writes.
-
-Recovering partially configured hosts:
-
-1. Run doctor to identify what failed:
-   ```bash
-   sudo ./setup.sh doctor server
-   sudo ./setup.sh doctor client
-   ```
-2. Re-run install for the role:
-   ```bash
-   sudo ./setup.sh upgrade --role server
-   sudo ./setup.sh upgrade --role client
-   ```
-3. If this was a multi-host deployment, re-run from your laptop:
-   ```bash
-   ./deploy.sh
-   ```
-
-### Backup snapshots before major writes
-
-```bash
-sudo ./setup.sh server --backup-snapshots
-sudo ./setup.sh client --backup-snapshots
-sudo ./setup.sh upgrade --backup-dir /var/backups/diy-sonos/manual-$(date +%Y%m%d-%H%M%S)
-./setup.sh init --backup-snapshots
-```
-
-When enabled, setup snapshots existing config/unit files before overwrite (e.g. `/etc/snapserver.conf`, `/etc/systemd/system/*.service`, and `.diy-sonos.generated.yml`) and prints exact restore commands.
-
-Restoring a previous file from snapshot:
-
-```bash
-sudo cp -a /var/backups/diy-sonos/<snapshot>/etc/systemd/system/snapclient.service /etc/systemd/system/snapclient.service
-sudo systemctl daemon-reload
-sudo systemctl restart snapclient
-```
-
-All setup scripts are idempotent — safe to re-run after changing `config.yml`:
-
-```bash
-sudo ./setup.sh server    # re-renders configs and restarts services
-sudo ./setup.sh client    # re-renders client service and restarts
-sudo ./setup.sh upgrade   # detects role and re-runs install safely
-```
-
-Packages are only installed if not already present. Services are restarted only after configuration is updated.
-
----
-
-## Advanced
-
-### On-device setup (alternative to deploy.sh)
-
-If you prefer to SSH into each device individually:
-
-```bash
-# On the server device
-sudo ./setup.sh server
-
-# On each client device
-sudo ./setup.sh client
-```
-
-For a single host acting as both server and player, set `profile.role: "server+client"` and run both modes on that host (`sudo ./setup.sh server` then `sudo ./setup.sh client`).
-
-The guided init wizard (also runs on-device):
-
-```bash
-./setup.sh init
-```
-
-Non-interactive:
-
-```bash
-./setup.sh init --role client --server-ip 192.168.1.100 --device-name "Kitchen" --audio-device hw:1,0
-```
-
-Config precedence is:
-1. CLI flags (`--server-ip`, `--device-name`, `--audio-device`)
-2. `.diy-sonos.generated.yml`
-3. `config.yml` (repo defaults)
-
-### Server+client combo
-
-For a single host acting as both server and player, set `profile.role: "server+client"` and run both modes (`sudo ./setup.sh server` then `sudo ./setup.sh client`) on that host. The bootstrap and deploy flows detect this via `host_has_ip`.
-
-### Bootstrap many clients remotely
-
-For power users who need per-client latency overrides via an inventory file:
-
-```bash
-cp clients.example.yml clients.yml
-# Edit clients.yml with your per-client overrides
-./scripts/bootstrap-clients.sh --hosts 192.168.1.121,192.168.1.122 --inventory clients.yml
-```
-
-You can also pass a newline-delimited host file:
-
-```bash
-./scripts/bootstrap-clients.sh --hosts-file hosts.txt --inventory clients.yml
-```
-
-The script reads per-client overrides from `clients.yml`:
-- `name` → Spotify device name
-- `latency` → `snapclient.latency_ms`
-- `audio_device` → `snapclient.audio_device`
-- `output_volume` → `snapclient.output_volume`
-
-Host selection comes from `--hosts` / `--hosts-file`; `clients.yml` supplies optional overrides by matching `clients[].host`.
-
-Secure SSH prerequisites for remote bootstrap:
-
-- SSH key-based authentication is configured for each client (`ssh-copy-id` or equivalent).
-- Host keys are verified and present in `~/.ssh/known_hosts` (do a manual SSH once per host).
-- The remote user can run `sudo ./setup.sh client` non-interactively when automating. Use `--sudo-passless-check` to fail fast if passwordless sudo is unavailable.
-- You trust the management machine running the script, since it handles your SSH key and can execute privileged commands remotely.
-
-The script uses OpenSSH BatchMode (`-o BatchMode=yes`) so it will fail instead of prompting for passwords.
-
-`scripts/bootstrap-clients.sh` is also designed for idempotent reruns: it re-syncs the repo, regenerates `.diy-sonos.generated.yml`, reapplies latency overrides from inventory, and re-runs `sudo ./setup.sh client` on each target host.
-
-### Manual YAML editing
-
-If you prefer to hand-edit config, update `config.yml` and/or `.diy-sonos.generated.yml` directly.
-
-Snapcast package upgrades are controlled in one place: `scripts/common.sh` → `SNAPCAST_VER_DEFAULT`. Update that value, then re-run setup on server and clients.
-
----
-
-## Spotify Authentication
-
-On first run, run one command on the server:
-
-```bash
-sudo librespot-auth-helper start-auth 4000 /var/cache/librespot
-```
-
-The helper prints explicit terminal outcomes:
-- `SUCCESS: ...` when credentials are already cached
-- `FAILURE: ...` when auth is still pending or the OAuth URL is not yet available
-
-It automatically detects whether you are connected over SSH and prints step-by-step instructions for:
-- laptop browser flow (explicit `ssh -N -L ...` tunnel command that must stay open)
-- on-device browser flow (`xdg-open`)
-
-It also prints callback listener status (`READY` / `NOT READY`) so you can quickly tell whether librespot is actually listening on the OAuth callback port.
-
-`deploy.sh` always prints this same `start-auth` command as the clear next action after server install.
-
-### Machine-parseable auth-cache verification
-
-For automation/CI scripts, use:
-
-```bash
-sudo librespot-auth-helper verify-auth-cache /var/cache/librespot
-```
-
-Output is deterministic key/value lines:
-- `AUTH_CACHE_STATUS=cached` (exit code `0`)
-- `AUTH_CACHE_STATUS=pending` (exit code `1`)
-
-You can still inspect service logs directly:
-
-```bash
-sudo journalctl -u librespot -f
-```
-
----
-
-## Configuration Reference
-
-Edit `config.yml` to customize behaviour. Re-run `sudo ./setup.sh server|client` after changes.
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `ssh_user` | `pi` | SSH username used by `deploy.sh` and `configure.sh --copy-keys` |
-| `server_ip` | `192.168.1.100` | IP of the server device; used by clients to connect and by `deploy.sh` |
-| `clients[].ip` | _(none)_ | IP of each client device; used by `deploy.sh` |
-| `spotify.device_name` | `DIY Sonos` | Name shown in the Spotify device list |
-| `spotify.bitrate` | `320` | Spotify stream bitrate: 96, 160, or 320 kbps |
-| `spotify.normalise` | `true` | Enables librespot volume normalisation (`--enable-volume-normalisation` is included only when `true`) |
-| `spotify.initial_volume` | `90` | Initial volume (0–100) |
-| `spotify.cache_dir` | `/var/cache/librespot` | OAuth credential and metadata cache |
-| `spotify.oauth_callback_port` | `4000` | Local OAuth callback port used by librespot and SSH tunnel helper |
-| `spotify.device_type` | `speaker` | Icon shown in Spotify: `speaker`, `avr`, `tv`, etc. |
-| `snapserver.fifo_path` | `/run/diy-sonos/snapfifo` | Named pipe between librespot and snapserver; keep outside `/tmp` |
-| `snapserver.sampleformat` | `44100:16:2` | Audio sample format (must match librespot) |
-| `snapserver.codec` | `flac` | Streaming codec: `flac` or `pcm` |
-| `snapserver.buffer_ms` | `1000` | End-to-end latency buffer in milliseconds |
-| `snapserver.port` | `1704` | TCP port for audio streaming |
-| `snapserver.control_port` | `1780` | HTTP control API port |
-| `snapclient.audio_device` | `auto` | ALSA device: `auto` or explicit like `hw:1,0` |
-| `snapclient.output_volume` | `90` | Client hardware mixer output volume percent (0–100), applied via `amixer` during client setup |
-| `snapclient.latency_ms` | `0` | Per-client latency trim in milliseconds |
-| `snapclient.instance` | `1` | Instance number (increment for multiple clients on same host) |
-
-`spotify.initial_volume` controls librespot's software stream volume at playback start on the server. `snapclient.output_volume` controls each client's local ALSA hardware mixer ceiling during setup. Use both: set a safe hardware baseline per client with `snapclient.output_volume`, then tune listening level behavior with `spotify.initial_volume`.
-
-### Preset tuning profiles
-
-`configure.sh` writes `profile_preset: basic|advanced` and chooses defaults per profile. `setup.sh init --preset` uses the same values.
-
-| Key | basic | advanced |
-|-----|-------|----------|
-| `spotify.bitrate` | 320 | 320 |
-| `spotify.normalise` | true | true |
-| `spotify.initial_volume` | 90 | 90 |
-| `snapserver.codec` | flac | pcm |
-| `snapserver.buffer_ms` | 1000 | 800 |
-| `snapclient.latency_ms` | 0 | -20 |
-| `snapclient.output_volume` | 90 | 90 |
-
-Basic is the recommended first install; advanced trades a lower buffer for tighter sync and uses `pcm` for lower CPU on constrained clients. Both default to 320 kbps and volume 90; modify after wizard by editing `config.yml`.
-
----
-
-## Audio Device Configuration
-
-### Auto-detection
-
-When `snapclient.audio_device` is `auto`, the setup script scans `aplay -l` for the first USB audio card and uses `hw:N,0`. This works for most USB DAC dongles.
-
-### Manual override
-
-If the auto-detected device is wrong, or the card number changes on reboot, hardcode it:
-
-```yaml
-snapclient:
-  audio_device: "hw:1,0"   # replace with your card number
-```
-
-Find your card number:
-```bash
-aplay -l
-# Look for your USB DAC in the output, note the card number
-```
-
----
+- Services: `librespot.service` + `snapserver.service` on server (`After=librespot.service`, `Wants=librespot.service`, not `Requires`); `snapclient.service` on clients (`After=network-online.target sound.target`)
+- FIFO: `/run/diy-sonos/snapfifo` (default), created via `mkfifo`, persisted via `/etc/tmpfiles.d/snapfifo.conf` as `d <dir> 0755 root root - -` + `p <path> 0660 root audio - -` + `systemd-tmpfiles --create`; stale old-path FIFO removed on path change; if path is under `/tmp` or `/var/tmp`, `fs.protected_fifos=0` via `/etc/sysctl.d/99-snapfifo.conf` else removed/restored to `1`
+- Snapserver config: `/etc/snapserver.conf` from `snapserver.conf.tmpl` (`sampleformat`, `codec`, `buffer`, `source = pipe:///…`)
+- Ports: `1704` (audio), `1780` (HTTP control), `4000` (librespot OAuth callback, configurable via `spotify.oauth_callback_port`), `5353` (mDNS via avahi)
+- Snapcast deb URL: `https://github.com/badaix/snapcast/releases/download/v{VER}/snap{server|client}_{VER}-1_{ARCH}_{CODENAME}.deb` with arch map `aarch64→arm64, armv7l|armv6l→armhf, x86_64→amd64` and codename fallback `bookworm → bullseye`
+- Cache dir: `/var/cache/librespot`
+- Boot-time ALSA volume restore: `/etc/systemd/system/diy-sonos-alsa-volume.service` + `/usr/local/bin/diy-sonos-apply-volume` plus `alsa-restore`/`alsa-state` units
 
 ## Troubleshooting
 
-See the full guide at [docs/troubleshooting.md](docs/troubleshooting.md) — it includes `setup.sh doctor` severity labels, `collect diagnostics` steps, and common failure signatures.
+See `docs/troubleshooting.md` for device-side diagnostics. Quick checks via SSH or the app’s **Device detail → Doctor**:
 
-**Three most common fixes:**
+- **Doctor** runs per-device checks: service installed/enabled/active (`librespot`, `snapserver`, `avahi-daemon` on server; `snapclient` + `alsa-restore` on client), listeners on `1704`/`1780`, FIFO is a pipe, resolved audio device ≠ `default` (warn), recent errors `journalctl -u <unit> -p err -n 15`. Results show pass/fail/warn + explanation + remediation (“Redeploy this device”).
+- **Deploy log** shows per-step output; idempotent re-run on an unchanged fleet reports “unchanged” and no service restarts (check `systemctl show -p ActiveEnterTimestamp <service>`).
+- **Dashboard offline badge**: client power off → offline within seconds via `Client.OnDisconnect`.
 
-- **No sound on a client →** `sudo ./setup.sh doctor client`; check `aplay -l` and `speaker-test -D <device>`; verify `snapclient.audio_device` matches a real `plughw:X,Y`.
-- **Device not visible in Spotify →** `sudo systemctl status avahi-daemon librespot --no-pager -l` and `sudo journalctl -u librespot -n 100 --no-pager`; ensure `avahi-daemon` is active (mDNS discovery).
-- **Audio dropouts / poor sync →** increase `snapserver.buffer_ms` (e.g. `2000`) in `config.yml` and redeploy; ensure strong Wi-Fi; try `codec: pcm` for lower CPU.
+Common fixes: `Redeploy this device` from the app (re-renders configs if-changed, fixes FIFO/tmpfiles/sysctl, reinstalls debs if needed). For OAuth issues, use **Connect Spotify** again (tunnel is automatic).
 
-For FIFO-specific checks: `ls -l /run/diy-sonos/snapfifo` and `sudo lsof /run/diy-sonos/snapfifo` during playback. The default path `/run/diy-sonos/snapfifo` needs no `fs.protected_fifos` sysctl; only a user-overridden `fifo_path` under `/tmp` or `/var/tmp` enables it via `/etc/sysctl.d/99-snapfifo.conf`.
+## Development
+
+Prerequisites: Rust stable (via `rustup`), Node 20, npm.
+
+```bash
+# Frontend dev (Vite)
+npm install
+npm run build        # tsc && vite build
+
+# Backend checks (from src-tauri)
+cargo fmt --check
+cargo clippy -- -D warnings
+cargo test
+
+# Desktop dev (Tauri)
+npm run tauri dev
+npm run tauri build        # produces installers per tauri.conf.json bundle targets
+npm run tauri build -- --no-bundle  # CI check without bundling
+
+# One-shot verification (repo root)
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run build
+```
+
+Distribution: `release.yml` builds on tag `v*` via `tauri-apps/tauri-action@v0` (windows-latest, macos-latest, ubuntu-22.04) and publishes installers + `latest.json` to the GitHub Release. Updater signing keys are generated once (`npm run tauri signer generate`); private key + passphrase stored as repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; public key embedded in `tauri.conf.json` under `plugins.updater.pubkey`.
+
+## License
+
+MIT — see `LICENSE`.
