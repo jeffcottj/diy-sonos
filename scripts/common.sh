@@ -218,6 +218,102 @@ validate_snapclient_output_volume() {
     fi
 }
 
+# prompt_output_volume <prompt_text> <default_val>
+# Prompts for a volume 0-100 with validation loop; echoes valid value.
+prompt_output_volume() {
+    local prompt_text="$1"
+    local default_val="$2"
+    local value
+    while true; do
+        if [[ -n "$default_val" ]]; then
+            read -r -p "$prompt_text [$default_val]: " value
+            value="${value:-$default_val}"
+        else
+            read -r -p "$prompt_text: " value
+        fi
+        if validate_snapclient_output_volume "$value"; then
+            echo "$value"
+            return 0
+        fi
+    done
+}
+
+# get_client_output_volume_for_ip <ip>
+# Returns per-client output_volume for given IP from config (base + generated override), if present.
+get_client_output_volume_for_ip() {
+    local query_ip="$1"
+    local base_yaml="${DEFAULT_CONFIG:-$SCRIPT_DIR/config.yml}"
+    local gen_yaml="${GENERATED_CONFIG:-$SCRIPT_DIR/.diy-sonos.generated.yml}"
+    python3 - "$query_ip" "$base_yaml" "$gen_yaml" 2>/dev/null <<'PYEOF'
+import sys, os
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+query_ip = sys.argv[1]
+base_yaml = sys.argv[2]
+gen_yaml = sys.argv[3]
+
+def load_yaml(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+            return data or {}
+    except Exception:
+        return {}
+
+data = load_yaml(base_yaml)
+if gen_yaml and os.path.exists(gen_yaml):
+    gen_data = load_yaml(gen_yaml)
+    if 'clients' in gen_data and gen_data['clients'] is not None:
+        data['clients'] = gen_data['clients']
+    if 'snapclient' in gen_data and isinstance(gen_data['snapclient'], dict) and 'output_volume' in gen_data['snapclient']:
+        if 'snapclient' not in data or not isinstance(data['snapclient'], dict):
+            data['snapclient'] = {}
+        data['snapclient']['output_volume'] = gen_data['snapclient']['output_volume']
+
+vol = ""
+for entry in data.get('clients', []) or []:
+    if isinstance(entry, dict) and str(entry.get('ip', '')).strip() == query_ip:
+        v = entry.get('output_volume')
+        if v is not None:
+            vol = str(v).strip()
+            break
+if vol:
+    print(vol)
+PYEOF
+}
+
+# get_effective_snapclient_output_volume
+# Resolves per-client output_volume for this host if configured, else global snapclient.output_volume.
+# Prints effective volume (0-100) and returns 0.
+get_effective_snapclient_output_volume() {
+    local global_vol
+    global_vol="$(cfg snapclient output_volume 90)"
+    if ! validate_snapclient_output_volume "$global_vol" 2>/dev/null; then
+        global_vol="90"
+    fi
+    local effective="$global_vol"
+    local local_ips
+    local_ips="$(hostname -I 2>/dev/null || true)"
+    if command -v ip >/dev/null 2>&1; then
+        local_ips+=" $(ip -4 addr show 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 | tr '\n' ' ')"
+    fi
+    local ip
+    for ip in $local_ips; do
+        [[ "$ip" == 127.* ]] && continue
+        [[ -z "$ip" ]] && continue
+        local per_vol
+        per_vol="$(get_client_output_volume_for_ip "$ip" 2>/dev/null || true)"
+        if [[ -n "$per_vol" ]] && validate_snapclient_output_volume "$per_vol" 2>/dev/null; then
+            effective="$per_vol"
+            break
+        fi
+    done
+    echo "$effective"
+}
+
+
 # ---------------------------------------------------------------------------
 # OS / arch detection
 # ---------------------------------------------------------------------------
@@ -317,27 +413,86 @@ install_deb() {
     fi
 
     echo "install_deb: pkg_name=$pkg_name installed_ver=${installed_ver:-<not-installed>} pkg_ver=$pkg_ver stamp=${stamp_content:-<none>}"
-    if [[ -n "$installed_ver" && "$installed_ver" == "$pkg_ver" && "$stamp_content" == "$filename" ]]; then
-        echo "install_deb: decision=skip (installed version and stamp match repo package exactly)"
+    if [[ -n "$installed_ver" && "$installed_ver" == "$pkg_ver" ]]; then
+        # Idempotent fast-path: already at target version, even if stamp is missing/mismatched
+        # (stamp mismatch happens after OS upgrade, manual install, or first-runs before stamp was introduced).
+        if [[ "$stamp_content" == "$filename" ]]; then
+            echo "install_deb: decision=skip (installed version and stamp match repo package exactly)"
+        else
+            echo "install_deb: decision=skip (installed version $installed_ver matches target $pkg_ver; updating stamp from '${stamp_content:-<none>}' to '$filename')"
+        fi
+        mkdir -p "$(dirname "$stamp_file")"
+        echo "$filename" > "$stamp_file"
         rm -f "$tmp"
         return 0
     fi
     if [[ -n "$installed_ver" ]]; then
-        echo "install_deb: decision=install (installed version or stamp differs from repo package)"
+        echo "install_deb: decision=install (installed version $installed_ver differs from target $pkg_ver)"
     else
         echo "install_deb: decision=install (package not currently installed)"
     fi
 
     echo "Downloading $filename..."
-    download_file "$url" "$tmp"
+    if ! download_file "$url" "$tmp"; then
+        # Fallback for distro codename specific debs (e.g. snapcast has no trixie build yet;
+        # bookworm debs work on trixie). Try alternative codenames before giving up.
+        if [[ "$filename" == *"_${OS_CODENAME:-}.deb" ]]; then
+            local fallback_codename
+            for fallback_codename in bookworm bullseye; do
+                [[ "$fallback_codename" == "${OS_CODENAME:-}" ]] && continue
+                local fallback_filename="${filename/_${OS_CODENAME}.deb/_${fallback_codename}.deb}"
+                local fallback_url="${url/_${OS_CODENAME}.deb/_${fallback_codename}.deb}"
+                [[ "$fallback_filename" == "$filename" ]] && continue
+                echo "Primary deb not found for $OS_CODENAME; trying fallback codename '$fallback_codename': $fallback_filename" >&2
+                local fallback_tmp
+                fallback_tmp="$(mktemp "${TMPDIR:-/tmp}/${fallback_filename}.XXXXXX")"
+                if download_file "$fallback_url" "$fallback_tmp"; then
+                    echo "Installing fallback $fallback_filename..."
+                    if dpkg -i "$fallback_tmp"; then
+                        apt-get install -f -y
+                        rm -f "$fallback_tmp" "$tmp"
+                        mkdir -p "$(dirname "$stamp_file")"
+                        echo "$fallback_filename" > "$stamp_file"
+                        echo "Installed fallback deb for $fallback_codename: $fallback_filename"
+                        return 0
+                    fi
+                    rm -f "$fallback_tmp"
+                else
+                    rm -f "$fallback_tmp"
+                    echo "Fallback $fallback_codename also not available: $fallback_url" >&2
+                fi
+            done
+        fi
+        # Final check: if version now matches (race or fallback installed), succeed
+        local recheck_ver=""
+        if dpkg -s "$pkg_name" &>/dev/null; then
+            recheck_ver="$(dpkg -s "$pkg_name" | awk '/^Version:/ {print $2}')"
+        fi
+        if [[ -n "$recheck_ver" && "$recheck_ver" == "$pkg_ver" ]]; then
+            echo "Warning: failed to download $filename but $pkg_name $recheck_ver is already installed; continuing" >&2
+            mkdir -p "$(dirname "$stamp_file")"
+            echo "$filename" > "$stamp_file"
+            rm -f "$tmp"
+            return 0
+        fi
+        rm -f "$tmp"
+        return 1
+    fi
     echo "Installing $filename..."
-    dpkg -i "$tmp"
-    apt-get install -f -y   # fix any dependency issues
+    if ! dpkg -i "$tmp"; then
+        echo "Error: dpkg -i failed for $filename" >&2
+        rm -f "$tmp"
+        return 1
+    fi
+    if ! apt-get install -f -y; then
+        echo "Error: apt-get install -f failed after installing $filename" >&2
+        rm -f "$tmp"
+        return 1
+    fi
     rm -f "$tmp"
     mkdir -p "$(dirname "$stamp_file")"
     echo "$filename" > "$stamp_file"
 }
-
 # ---------------------------------------------------------------------------
 # File / FIFO helpers
 # ---------------------------------------------------------------------------
@@ -346,6 +501,9 @@ install_deb() {
 # Creates a named pipe (FIFO) if it doesn't already exist.
 ensure_fifo() {
     local path="$1"
+    local dir
+    dir="$(dirname "$path")"
+    mkdir -p "$dir"
     if [[ -p "$path" ]]; then
         echo "FIFO already exists: $path"
     elif [[ -e "$path" ]]; then

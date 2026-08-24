@@ -141,9 +141,11 @@ if [[ -n "$OLD_FIFO" && "$OLD_FIFO" != "$FIFO_PATH" && -e "$OLD_FIFO" ]]; then
     rm -f "$OLD_FIFO"
     echo "Removed old FIFO: $OLD_FIFO"
 fi
+FIFO_DIR="$(dirname "$FIFO_PATH")"
+# Ensure parent directory exists before creating FIFO (idempotent, handles /run migration)
+ensure_dir "$FIFO_DIR"
 ensure_fifo "$FIFO_PATH"
 
-FIFO_DIR="$(dirname "$FIFO_PATH")"
 # systemd-tmpfiles.d entry so the FIFO is recreated after reboot
 snapshot_file /etc/tmpfiles.d/snapfifo.conf
 cat > /etc/tmpfiles.d/snapfifo.conf <<EOF
@@ -152,7 +154,6 @@ p ${FIFO_PATH} 0660 root audio - -
 EOF
 systemd-tmpfiles --create /etc/tmpfiles.d/snapfifo.conf 2>/dev/null || true
 echo "Wrote /etc/tmpfiles.d/snapfifo.conf"
-
 # ---------------------------------------------------------------------------
 # 6. sysctl: allow FIFO writes from non-owner in /tmp
 # ---------------------------------------------------------------------------

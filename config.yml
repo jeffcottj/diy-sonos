@@ -4,7 +4,11 @@ server_ip: "192.168.1.100"        # IP of the server device (used by clients to 
 
 clients:                          # Speaker client IPs; used by deploy.sh
   - ip: "192.168.1.121"
+    ssh_user: "pi"
+    output_volume: 90             # Per-client ALSA volume (0-100, persists via alsactl + boot service)
   - ip: "192.168.1.122"
+    ssh_user: "pi"
+    output_volume: 90
 
 # ── Spotify ───────────────────────────────────────────────────────────────
 spotify:
@@ -27,6 +31,6 @@ snapserver:
 
 snapclient:
   audio_device: "auto"            # "auto" = detect first USB audio card; or "hw:1,0" etc.
-  output_volume: 90                # Hardware mixer output volume percent (0-100)
+  output_volume: 90             # Hardware mixer output volume percent (0-100) - global default
   latency_ms: 0                   # Per-client latency trim
   instance: 1

@@ -153,7 +153,22 @@ resolve_audio_device "$(cfg snapclient audio_device)"
 echo "Audio device: $RESOLVED_AUDIO_DEVICE"
 echo "Mixer card:   $(resolve_mixer_card_for_playback_device "$RESOLVED_AUDIO_DEVICE" || echo '<unresolved>')"
 
-set_client_output_volume_max "$(cfg snapclient output_volume 100)"
+# Determine effective output volume: per-client override for this host if configured, else global
+EFFECTIVE_OUTPUT_VOLUME=""
+if declare -F get_effective_snapclient_output_volume >/dev/null 2>&1; then
+    EFFECTIVE_OUTPUT_VOLUME="$(get_effective_snapclient_output_volume 2>/dev/null || true)"
+fi
+if [[ -z "$EFFECTIVE_OUTPUT_VOLUME" ]]; then
+    EFFECTIVE_OUTPUT_VOLUME="$(cfg snapclient output_volume 90)"
+fi
+# Validate; fallback to 90 on invalid config
+if ! validate_snapclient_output_volume "$EFFECTIVE_OUTPUT_VOLUME" 2>/dev/null; then
+    echo "Warning: configured output_volume '$EFFECTIVE_OUTPUT_VOLUME' invalid, falling back to 90" >&2
+    EFFECTIVE_OUTPUT_VOLUME="90"
+fi
+echo "Effective output volume: ${EFFECTIVE_OUTPUT_VOLUME}% (global=$(cfg snapclient output_volume 90)%$(if [[ "$(cfg snapclient output_volume 90)" != "$EFFECTIVE_OUTPUT_VOLUME" ]]; then echo ", per-client override active"; fi))"
+
+set_client_output_volume_max "$EFFECTIVE_OUTPUT_VOLUME"
 
 if command -v alsactl >/dev/null 2>&1; then
     if alsactl store >/dev/null 2>&1; then
@@ -167,8 +182,74 @@ else
     echo "Warning: alsactl not found; cannot persist ALSA mixer state" >&2
 fi
 
-enable_alsa_restore_units
+# Ensure volume survives reboot even if alsa-restore is unavailable or card renumbered:
+# Create a small oneshot service that reapplies the configured volume at boot.
+ALSA_VOLUME_SERVICE="/etc/systemd/system/diy-sonos-alsa-volume.service"
+ALSA_VOLUME_SCRIPT="/usr/local/bin/diy-sonos-apply-volume"
+snapshot_file "$ALSA_VOLUME_SERVICE"
+snapshot_file "$ALSA_VOLUME_SCRIPT"
+cat > "$ALSA_VOLUME_SCRIPT" <<EOSVC
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET_VOL="$EFFECTIVE_OUTPUT_VOLUME"
+RESOLVED_DEVICE="$RESOLVED_AUDIO_DEVICE"
+# Resolve card at boot (handles renumbering and 'auto' without repo dependency)
+if [[ "\$RESOLVED_DEVICE" == "auto" ]]; then
+    # Try to find first non-HDMI card via /proc/asound/cards, fallback to aplay
+    if [[ -f /proc/asound/cards ]]; then
+        while IFS= read -r line; do
+            if [[ "\$line" =~ ^[[:space:]]*[0-9]+[[:space:]]*\[([^]]+)\][[:space:]]*:[[:space:]]*([^-]+) ]]; then
+                _cname="\${BASH_REMATCH[1]}"
+                _cdriver="\${BASH_REMATCH[2]}"
+                _cname="\${_cname%"\${_cname##*[![:space:]]}"}"
+                _cdriver="\${_cdriver%"\${_cdriver##*[![:space:]]}"}"
+                if [[ "\$_cdriver" == "USB-Audio" ]]; then
+                    RESOLVED_DEVICE="plughw:\${_cname},0"
+                    break
+                fi
+            fi
+        done < /proc/asound/cards
+    fi
+    if [[ "\$RESOLVED_DEVICE" == "auto" ]]; then
+        _first="\$(aplay -l 2>/dev/null | awk '/^card [0-9]+:/{print \$2; sub(/:$/,"",\$2); print \$2; exit}')"
+        if [[ -n "\$_first" ]]; then
+            RESOLVED_DEVICE="plughw:\${_first},0"
+        else
+            RESOLVED_DEVICE="default"
+        fi
+    fi
+fi
+CARD="\$(case "\$RESOLVED_DEVICE" in plughw:*|hw:*) echo "\${RESOLVED_DEVICE#*:}" | cut -d, -f1 ;; *) echo "0" ;; esac)"
+if [[ -z "\$CARD" ]]; then CARD="0"; fi
+MIXER="\$(amixer -c "\$CARD" scontrols 2>/dev/null | awk -F"'" 'NR==1{print \$2}' || true)"
+if [[ -n "\$MIXER" ]]; then
+    amixer -c "\$CARD" sset "\$MIXER" "\${TARGET_VOL}%" unmute >/dev/null 2>&1 || true
+else
+    for fb in Master PCM Speaker; do
+        amixer -c "\$CARD" sset "\$fb" "\${TARGET_VOL}%" unmute >/dev/null 2>&1 && break || true
+    done
+fi
+EOSVC
+chmod +x "$ALSA_VOLUME_SCRIPT"
+cat > "$ALSA_VOLUME_SERVICE" <<EOSVC
+[Unit]
+Description=DIY Sonos — restore ALSA volume for $RESOLVED_AUDIO_DEVICE
+After=sound.target
+Wants=sound.target
 
+[Service]
+Type=oneshot
+ExecStart=$ALSA_VOLUME_SCRIPT
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOSVC
+systemctl daemon-reload 2>/dev/null || true
+systemctl enable diy-sonos-alsa-volume.service 2>/dev/null || true
+echo "Ensured boot-time volume restore service: diy-sonos-alsa-volume.service (${EFFECTIVE_OUTPUT_VOLUME}%)"
+
+enable_alsa_restore_units
 # Validate that the resolved audio device is usable in a system service
 if [[ "$RESOLVED_AUDIO_DEVICE" == "default" ]]; then
     echo "" >&2

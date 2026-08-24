@@ -308,10 +308,26 @@ run_init_mode() {
     fi
 
     if [[ -z "$output_volume" ]]; then
-        if [[ "$preset" == "basic" ]]; then
-            output_volume="90"
+        # Always prompt for hardware output volume so it persists via ALSA store per-device
+        # Use shared helper if available (validates 0-100), else fallback to prompt_with_default
+        if declare -F prompt_output_volume >/dev/null 2>&1; then
+            output_volume="$(prompt_output_volume "Client hardware output volume (0-100, persists via ALSA store)" "90")"
         else
-            output_volume="$(prompt_with_default "Client hardware output volume (0-100)" "90")"
+            local _vol_tmp
+            while true; do
+                _vol_tmp="$(prompt_with_default "Client hardware output volume (0-100)" "90")"
+                if [[ "$_vol_tmp" =~ ^[0-9]+$ ]] && (( _vol_tmp >= 0 && _vol_tmp <= 100 )); then
+                    output_volume="$_vol_tmp"
+                    break
+                fi
+                echo "  Volume must be an integer between 0 and 100." >&2
+            done
+        fi
+    else
+        # CLI-provided value: validate
+        if ! validate_snapclient_output_volume "$output_volume" 2>/dev/null; then
+            echo "Error: --output-volume '$output_volume' is invalid; must be 0-100" >&2
+            exit 1
         fi
     fi
 
@@ -466,6 +482,39 @@ check_config_schema_and_values() {
     elif ! validate_snapclient_output_volume "$(cfg snapclient output_volume)"; then
         failures=1
     fi
+
+    # Validate per-client output_volume overrides (if any)
+    local per_client_volumes
+    per_client_volumes="$(python3 - "$DEFAULT_CONFIG" "$GENERATED_CONFIG" 2>/dev/null <<'PYEOF'
+import sys, os
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+base, gen = sys.argv[1], sys.argv[2]
+def load(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+    except:
+        return {}
+data = load(base)
+if gen and os.path.exists(gen):
+    gd = load(gen)
+    if 'clients' in gd and gd['clients'] is not None:
+        data['clients'] = gd['clients']
+for entry in data.get('clients', []) or []:
+    if isinstance(entry, dict) and 'output_volume' in entry and entry['output_volume'] is not None:
+        print(str(entry['output_volume']).strip())
+PYEOF
+)" || true
+    local vol
+    for vol in $per_client_volumes; do
+        if ! validate_snapclient_output_volume "$vol" 2>/dev/null; then
+            echo "  - Invalid per-client output_volume '$vol'; must be 0-100" >&2
+            failures=1
+        fi
+    done
 
     if [[ "$mode" == "server" || "$mode" == "client" ]]; then
         if [[ -z "$(cfg spotify device_name)" ]]; then

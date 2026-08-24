@@ -19,11 +19,13 @@ def parse_file(path):
     spotify_device_name = "DIY Sonos"
     oauth_callback_port = "4000"
     spotify_cache_dir = "/var/cache/librespot"
+    snapclient_output_volume = "90"
     client_entries = []
 
     in_clients = False
     in_spotify = False
     in_server = False
+    in_snapclient = False
 
     for raw in lines:
         # Strip inline # comments (known limitation: # inside quotes stripped)
@@ -36,6 +38,7 @@ def parse_file(path):
             in_clients = stripped.startswith("clients:")
             in_spotify = stripped.startswith("spotify:")
             in_server = stripped.startswith("server:")
+            in_snapclient = stripped.startswith("snapclient:")
             # Section header lines themselves are not key-values; continue to check other patterns
             # but allow server_ip etc on same line? No, section lines are headers only.
             # For clients: we need to keep in_clients true, then next lines handle entries.
@@ -111,15 +114,25 @@ def parse_file(path):
             spotify_cache_dir = unquote(m.group(1))
         # Also handle quoted cache_dir with spaces? cache_dir is path without spaces, so fine.
 
+        # snapclient global output_volume (outside clients block)
+        if in_snapclient and not in_clients:
+            m = re.match(r'^\s+output_volume:\s*"?([^"#\s]+)"?', stripped)
+            if m:
+                snapclient_output_volume = unquote(m.group(1))
+
         # clients entries
         if in_clients:
             m = re.match(r'^\s*-\s*ip:\s*"?([0-9.]+)"?', stripped)
             if m:
-                client_entries.append([unquote(m.group(1)), default_ssh_user])
+                client_entries.append([unquote(m.group(1)), default_ssh_user, ""])
                 continue
             m = re.match(r'^\s+ssh_user:\s*"?([^"#\s]+)"?', stripped)
             if m and client_entries:
                 client_entries[-1][1] = unquote(m.group(1))
+                continue
+            m = re.match(r'^\s+output_volume:\s*"?([^"#\s]+)"?', stripped)
+            if m and client_entries:
+                client_entries[-1][2] = unquote(m.group(1))
 
     # Fallbacks
     if not server_ssh_user:
@@ -133,6 +146,7 @@ def parse_file(path):
         "SPOTIFY_DEVICE_NAME": spotify_device_name,
         "OAUTH_CALLBACK_PORT": oauth_callback_port,
         "SPOTIFY_CACHE_DIR": spotify_cache_dir,
+        "SNAPCLIENT_OUTPUT_VOLUME": snapclient_output_volume,
         "CLIENTS": client_entries,
     }
 
@@ -158,8 +172,15 @@ def main():
     out_lines.append(f"SPOTIFY_DEVICE_NAME={data['SPOTIFY_DEVICE_NAME']}")
     out_lines.append(f"OAUTH_CALLBACK_PORT={data['OAUTH_CALLBACK_PORT']}")
     out_lines.append(f"SPOTIFY_CACHE_DIR={data['SPOTIFY_CACHE_DIR']}")
-    for ip, user in data["CLIENTS"]:
+    out_lines.append(f"SNAPCLIENT_OUTPUT_VOLUME={data['SNAPCLIENT_OUTPUT_VOLUME']}")
+    for entry in data["CLIENTS"]:
+        # Backward compat: CLIENT=ip|user
+        ip = entry[0]
+        user = entry[1] if len(entry) > 1 else ""
+        vol = entry[2] if len(entry) > 2 else ""
         out_lines.append(f"CLIENT={ip}|{user}")
+        if vol:
+            out_lines.append(f"CLIENT_OUTPUT_VOLUME={ip}|{vol}")
     sys.stdout.write("\n".join(out_lines) + ("\n" if out_lines else ""))
 
 

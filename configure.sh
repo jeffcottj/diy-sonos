@@ -21,8 +21,10 @@ read_existing_config() {
     EXISTING_SERVER_IP=""
     EXISTING_SSH_USER=""
     EXISTING_SERVER_SSH_USER=""
+    EXISTING_GLOBAL_OUTPUT_VOLUME=""
     EXISTING_CLIENT_IPS=()
     declare -gA EXISTING_CLIENT_SSH_USERS=()
+    declare -gA EXISTING_CLIENT_OUTPUT_VOLUMES=()
 
     if [[ ! -f "$CONFIG_FILE" ]]; then
         return
@@ -32,8 +34,9 @@ read_existing_config() {
     parsed="$(python3 "$SCRIPT_DIR/scripts/parse-network-config.py" "$CONFIG_FILE")" || return
 
     EXISTING_CLIENT_IPS=()
-    # Clear associative array (declare above ensures it exists)
+    # Clear associative arrays (declare above ensures they exist)
     for k in "${!EXISTING_CLIENT_SSH_USERS[@]}"; do unset "EXISTING_CLIENT_SSH_USERS[$k]"; done
+    for k in "${!EXISTING_CLIENT_OUTPUT_VOLUMES[@]}"; do unset "EXISTING_CLIENT_OUTPUT_VOLUMES[$k]"; done
 
     while IFS='=' read -r key val; do
         case "$key" in
@@ -41,17 +44,34 @@ read_existing_config() {
             SERVER_IP) EXISTING_SERVER_IP="$val" ;;
             SERVER_SSH_USER) EXISTING_SERVER_SSH_USER="$val" ;;
             SPOTIFY_DEVICE_NAME) EXISTING_DEVICE_NAME="$val" ;;
+            SNAPCLIENT_OUTPUT_VOLUME) EXISTING_GLOBAL_OUTPUT_VOLUME="$val" ;;
             CLIENT)
                 local ip="${val%%|*}"
                 local user="${val#*|}"
+                # Handle legacy CLIENT=ip|user|vol format if present (backward compat)
+                if [[ "$user" == *"|"* ]]; then
+                    local vol="${user#*|}"
+                    user="${user%%|*}"
+                    if [[ -n "$vol" ]]; then
+                        EXISTING_CLIENT_OUTPUT_VOLUMES["$ip"]="$vol"
+                    fi
+                fi
                 EXISTING_CLIENT_IPS+=("$ip")
                 EXISTING_CLIENT_SSH_USERS["$ip"]="$user"
+                ;;
+            CLIENT_OUTPUT_VOLUME)
+                local ip="${val%%|*}"
+                local vol="${val#*|}"
+                EXISTING_CLIENT_OUTPUT_VOLUMES["$ip"]="$vol"
                 ;;
         esac
     done <<< "$parsed"
 
     if [[ -z "$EXISTING_SERVER_SSH_USER" ]]; then
         EXISTING_SERVER_SSH_USER="${EXISTING_SSH_USER:-pi}"
+    fi
+    if [[ -z "$EXISTING_GLOBAL_OUTPUT_VOLUME" ]]; then
+        EXISTING_GLOBAL_OUTPUT_VOLUME="90"
     fi
 }
 
@@ -107,6 +127,33 @@ prompt_ipv4_with_default() {
         echo "  Invalid IP address. Please enter a valid IPv4 address (e.g. 192.168.1.100)."
     done
 }
+
+validate_output_volume() {
+    local value="$1"
+    if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+        echo "  Volume must be an integer between 0 and 100." >&2
+        return 1
+    fi
+    if ((value < 0 || value > 100)); then
+        echo "  Volume must be between 0 and 100." >&2
+        return 1
+    fi
+    return 0
+}
+
+prompt_output_volume() {
+    local prompt_text="$1"
+    local default_val="$2"
+    local value
+    while true; do
+        value="$(prompt_with_default "$prompt_text" "$default_val")"
+        if validate_output_volume "$value"; then
+            echo "$value"
+            return 0
+        fi
+    done
+}
+
 
 choose_profile_preset() {
     local default_choice="1"
@@ -245,12 +292,26 @@ write_config_yml() {
         output_volume="90"
     fi
 
-    # Build clients YAML block
+    # Allow wizard-collected global override (set via CLIENT_OUTPUT_VOLUMES fallback)
+    # If no per-client volumes were collected, keep default 90; else global stays 90 as baseline.
+    # Per-client volumes are taken from CLIENT_OUTPUT_VOLUMES associative array.
+
+    # Build clients YAML block with per-client output_volume
     local clients_yaml=""
     for ip in "${client_ips[@]}"; do
         local client_user="${CLIENT_SSH_USERS[$ip]:-$ssh_user}"
+        # Per-client volume: use wizard-collected value, else existing per-client, else global default
+        local client_vol="${CLIENT_OUTPUT_VOLUMES[$ip]:-}"
+        if [[ -z "$client_vol" ]]; then
+            client_vol="${EXISTING_CLIENT_OUTPUT_VOLUMES[$ip]:-$output_volume}"
+        fi
+        # Validate fallback
+        if ! validate_output_volume "$client_vol" 2>/dev/null; then
+            client_vol="$output_volume"
+        fi
         clients_yaml+="  - ip: \"${ip}\""$'\n'
         clients_yaml+="    ssh_user: \"${client_user}\""$'\n'
+        clients_yaml+="    output_volume: ${client_vol}"$'\n'
     done
 
     # Detect combo mode: server IP is also a client
@@ -293,7 +354,7 @@ snapserver:
 
 snapclient:
   audio_device: "auto"            # "auto" = detect first USB audio card; or "hw:1,0" etc.
-  output_volume: ${output_volume}             # Hardware mixer output volume percent (0-100)
+  output_volume: ${output_volume}             # Hardware mixer output volume percent (0-100) - global default
   latency_ms: ${latency_ms}                   # Per-client latency trim
   instance: 1
 YAML
@@ -449,11 +510,31 @@ run_wizard() {
     local client_ips=()
     mapfile -t client_ips < <(collect_client_ips EXISTING_CLIENT_IPS)
     declare -gA CLIENT_SSH_USERS=()
+    declare -gA CLIENT_OUTPUT_VOLUMES=()
     local client_ip
     for client_ip in "${client_ips[@]}"; do
         CLIENT_SSH_USERS["$client_ip"]="$(prompt_non_empty_with_default "SSH username for client ${client_ip}" "${EXISTING_CLIENT_SSH_USERS[$client_ip]:-$ssh_user}")"
     done
-
+    # Server may also act as a client/speaker: ask explicitly so user doesn't need to duplicate IP manually
+    local server_is_client=0
+    for client_ip in "${client_ips[@]}"; do
+        if [[ "$client_ip" == "$server_ip" ]]; then server_is_client=1; break; fi
+    done
+    if [[ $server_is_client -eq 0 ]]; then
+        local combo_choice
+        read -r -p "Should server ${server_ip} also play audio locally (server+client mode)? [y/N]: " combo_choice
+        combo_choice="${combo_choice:-N}"
+        if [[ "$combo_choice" =~ ^[Yy]$ ]]; then
+            client_ips+=("$server_ip")
+            CLIENT_SSH_USERS["$server_ip"]="$ssh_user"
+            echo "  Added server ${server_ip} as client for local playback."
+        fi
+    fi
+    # Per-client output volumes (survives restarts via ALSA store)
+    for client_ip in "${client_ips[@]}"; do
+        local existing_vol="${EXISTING_CLIENT_OUTPUT_VOLUMES[$client_ip]:-${EXISTING_GLOBAL_OUTPUT_VOLUME:-90}}"
+        CLIENT_OUTPUT_VOLUMES["$client_ip"]="$(prompt_output_volume "Output volume for client ${client_ip} (0-100)" "$existing_vol")"
+    done
     while true; do
         echo ""
         echo "Configuration summary:"
@@ -463,7 +544,7 @@ run_wizard() {
         echo "  Server SSH  : $ssh_user"
         echo "  Clients     : ${client_ips[*]}"
         for client_ip in "${client_ips[@]}"; do
-            echo "    - ${client_ip} (ssh user: ${CLIENT_SSH_USERS[$client_ip]})"
+            echo "    - ${client_ip} (ssh user: ${CLIENT_SSH_USERS[$client_ip]}, volume: ${CLIENT_OUTPUT_VOLUMES[$client_ip]:-90})"
         done
         echo ""
         echo "Conflict checks:"
@@ -482,10 +563,11 @@ run_wizard() {
         echo "  4) Server SSH user"
         echo "  5) Client IPs"
         echo "  6) Client SSH users"
-        echo "  7) Continue"
+        echo "  7) Client output volumes (survives restart)"
+        echo "  8) Continue"
         local edit_choice
-        read -r -p "Select option [7]: " edit_choice
-        edit_choice="${edit_choice:-7}"
+        read -r -p "Select option [8]: " edit_choice
+        edit_choice="${edit_choice:-8}"
 
         case "$edit_choice" in
             1) device_name="$(prompt_non_empty_with_default "Speaker system name (shown in Spotify)" "$device_name")" ;;
@@ -497,6 +579,12 @@ run_wizard() {
                 for client_ip in "${client_ips[@]}"; do
                     CLIENT_SSH_USERS["$client_ip"]="$(prompt_non_empty_with_default "SSH username for client ${client_ip}" "${CLIENT_SSH_USERS[$client_ip]:-$ssh_user}")"
                 done
+                for client_ip in "${client_ips[@]}"; do
+                    if [[ -z "${CLIENT_OUTPUT_VOLUMES[$client_ip]:-}" ]]; then
+                        local existing_vol="${EXISTING_CLIENT_OUTPUT_VOLUMES[$client_ip]:-90}"
+                        CLIENT_OUTPUT_VOLUMES["$client_ip"]="$(prompt_output_volume "Output volume for client ${client_ip} (0-100)" "$existing_vol")"
+                    fi
+                done
                 ;;
             6)
                 for client_ip in "${client_ips[@]}"; do
@@ -504,14 +592,19 @@ run_wizard() {
                 done
                 ;;
             7)
+                for client_ip in "${client_ips[@]}"; do
+                    CLIENT_OUTPUT_VOLUMES["$client_ip"]="$(prompt_output_volume "Output volume for client ${client_ip} (0-100)" "${CLIENT_OUTPUT_VOLUMES[$client_ip]:-90}")"
+                done
+                ;;
+            8)
                 if print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
                     break
                 fi
                 ;;
-            *) echo "  Invalid option. Please choose 1-7." ;;
+            *) echo "  Invalid option. Please choose 1-8." ;;
         esac
 
-        if [[ "$edit_choice" == "7" ]] && ! print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
+        if [[ "$edit_choice" == "8" ]] && ! print_summary_conflicts "$server_ip" "${client_ips[@]}"; then
             echo "Cannot continue until conflicts are resolved."
         fi
     done
