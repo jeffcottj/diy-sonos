@@ -59,7 +59,7 @@ Repo layout:
   README.md, LICENSE, CLAUDE.md
 ```
 
-Crates: `tauri` 2, `tauri-plugin-updater`, `tauri-plugin-opener`, `tauri-plugin-dialog`; `russh` (no `russh-sftp` — files go over exec); `mdns-sd`; `tokio`, `serde`, `serde_yaml`, `thiserror`/`anyhow`. Frontend: React 18, TypeScript, Vite, Tailwind 4, `zustand`; no component library. `npm` package manager. Do NOT use `snapcast-control` crate — hand-rolled thin JSON-RPC client (~8 methods).
+Crates: `tauri` 2, `tauri-plugin-opener`; `russh` (no `russh-sftp` — files go over exec); `mdns-sd`; `tokio`, `serde`, `serde_yaml`, `anyhow`. Frontend: React 18, TypeScript, Vite, Tailwind 4, `zustand`; no component library. `npm` package manager. Do NOT use `snapcast-control` crate — hand-rolled thin JSON-RPC client (~8 methods).
 
 Snapcast control: frontend opens `new WebSocket("ws://<server_ip>:1780/jsonrpc")` directly, sends `Server.GetStatus`, and keeps state live from notifications (`Client.OnConnect/OnDisconnect/OnVolumeChanged/...`, `Group.OnMute/OnStreamChanged`, `Server.OnUpdate`). Methods: `Server.GetStatus`, `Server.DeleteClient`, `Client.SetVolume`, `Client.SetLatency`, `Client.SetName`, `Group.SetMute`, `Group.SetClients`, `Group.SetName`. Clients matched by `client.host.ip` against app device IPs. If cross-origin WebSocket is rejected, Rust fallback in `snapcast.rs` (tokio-tungstenite) bridges via Tauri events.
 

@@ -52,11 +52,5 @@
         "bundleMediaFramework": false
       }
     }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "PLACEHOLDER_PUBKEY_REPLACE_WITH_MINISIGN_PUBKEY",
-      "endpoints": ["https://github.com/jeffcottj/diy-sonos/releases/latest/download/latest.json"]
-    }
   }
 }

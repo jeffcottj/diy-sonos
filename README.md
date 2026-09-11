@@ -40,7 +40,6 @@ The app is **unsigned** (public GitHub Releases, no Apple Developer ID / EV cert
 - **macOS Gatekeeper**: Finder → Right-click `DIY Sonos.app` → **Open** → **Open** in the dialog. Subsequent launches work normally. Or: System Settings → Privacy & Security → **Open Anyway**.
 - **Windows SmartScreen**: “Windows protected your PC” → **More info** → **Run anyway**.
 
-Updates: the app checks `https://github.com/jeffcottj/diy-sonos/releases/latest/download/latest.json` via `tauri-plugin-updater`. When an update is available you’ll see a prompt; it installs on restart.
 
 ## Getting started
 
