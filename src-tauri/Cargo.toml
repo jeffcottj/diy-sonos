@@ -23,7 +23,7 @@ anyhow = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 russh = { version = "0.44", features = [] }
-mdns-sd = "0.13"
+mdns-sd = "0.21"
 ssh-key = { version = "0.6", features = ["ed25519"] }
 regex = "1"
 sha2 = "0.11"
