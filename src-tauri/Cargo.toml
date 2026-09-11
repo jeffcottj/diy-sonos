@@ -22,7 +22,7 @@ serde_yaml = "0.9"
 anyhow = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
-russh = { version = "0.44", features = [] }
+russh = { version = "0.63", features = [] }
 mdns-sd = "0.21"
 ssh-key = { version = "0.6", features = ["ed25519", "getrandom"] }
 regex = "1"
