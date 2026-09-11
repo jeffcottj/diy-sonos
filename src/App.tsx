@@ -41,7 +41,7 @@ function App() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       <header className="border-b border-zinc-800 px-6 py-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold tracking-tight">DIY Sonos</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Multispot</h1>
         <div className="flex items-center gap-2">
           <nav className="flex gap-1 text-xs">
             <button
@@ -88,7 +88,7 @@ function App() {
         {tab === "settings" && <Settings />}
 
         <p className="text-xs text-zinc-600">
-          Frontend talks directly to Snapcast on ws://&lt;server_ip&gt;:1780/jsonrpc. Spotify browsing not included — use any Spotify app and select “DIY Sonos”.
+          Frontend talks directly to Snapcast on ws://&lt;server_ip&gt;:1780/jsonrpc. Spotify browsing not included — use any Spotify app and select “Multispot”.
         </p>
       </main>
     </div>

@@ -66,7 +66,7 @@ pub fn client_steps(
     if is_combo {
         steps.push((
             "combo-keep-snapserver".to_string(),
-            "DIY_SONOS_COMBO_ROLE=1 keep snapserver".to_string(),
+            "MULTISPOT_COMBO_ROLE=1 keep snapserver".to_string(),
         ));
     } else {
         steps.push((

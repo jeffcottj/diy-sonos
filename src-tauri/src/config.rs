@@ -89,7 +89,7 @@ pub struct AppConfig {
 }
 
 fn default_device_name() -> String {
-    "DIY Sonos".to_string()
+    "Multispot".to_string()
 }
 fn default_bitrate() -> u16 {
     320
@@ -430,7 +430,7 @@ fn config_path() -> Result<PathBuf, anyhow::Error> {
 fn dirs_next() -> Option<PathBuf> {
     if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
         if !xdg.is_empty() {
-            return Some(PathBuf::from(xdg).join("dev.jeffcottj.diy-sonos"));
+            return Some(PathBuf::from(xdg).join("dev.jeffcottj.multispot"));
         }
     }
     if let Ok(home) = std::env::var("HOME") {
@@ -438,7 +438,7 @@ fn dirs_next() -> Option<PathBuf> {
             return Some(
                 PathBuf::from(home)
                     .join(".config")
-                    .join("dev.jeffcottj.diy-sonos"),
+                    .join("dev.jeffcottj.multispot"),
             );
         }
     }
@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn defaults_match_spec() {
         let cfg = AppConfig::default();
-        assert_eq!(cfg.spotify.device_name, "DIY Sonos");
+        assert_eq!(cfg.spotify.device_name, "Multispot");
         assert_eq!(cfg.spotify.bitrate, 320);
         assert!(cfg.spotify.normalise);
         assert_eq!(cfg.spotify.initial_volume, 90);
@@ -667,7 +667,7 @@ clients:
     ssh_user: "pi"
     output_volume: 85
 spotify:
-  device_name: "DIY Sonos"
+  device_name: "Multispot"
   bitrate: 320
 "#;
         let cfg: AppConfig = serde_yaml::from_str(yaml).unwrap();
@@ -744,7 +744,7 @@ clients:
   - ip: "192.168.1.121"
     output_volume: 90
 spotify:
-  device_name: "DIY Sonos"
+  device_name: "Multispot"
 "#,
         )
         .unwrap();

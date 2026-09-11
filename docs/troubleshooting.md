@@ -1,6 +1,6 @@
 # Troubleshooting
 
-This guide is for the **DIY Sonos desktop app** (Tauri + Rust). The bash toolchain (`setup.sh`, `deploy.sh`, etc.) no longer exists. All orchestration — rendering configs, pushing file contents over the same SSH connection (base64-staged, no SFTP involved), running remote commands over SSH — is done by the app. Remote privileged actions remain ordinary shell commands (`apt-get`, `systemctl`, `amixer`, `journalctl`) that the app orchestrates; it doesn’t replace them.
+This guide is for the **Multispot desktop app** (Tauri + Rust). The bash toolchain (`setup.sh`, `deploy.sh`, etc.) no longer exists. All orchestration — rendering configs, pushing file contents over the same SSH connection (base64-staged, no SFTP involved), running remote commands over SSH — is done by the app. Remote privileged actions remain ordinary shell commands (`apt-get`, `systemctl`, `amixer`, `journalctl`) that the app orchestrates; it doesn’t replace them.
 
 Device-side facts (services, FIFO, ports) are unchanged; only how you invoke them has moved from scripts to the app.
 
@@ -97,7 +97,7 @@ aplay -l
 aplay -L | head -n 80
 ```
 
-Pick a valid device (e.g., `plughw:Device,0` or `hw:1,0`) and set it by hand for now (no picker in the UI yet — edit `~/.config/dev.jeffcottj.diy-sonos/config.yml`, `snapclient.audio_device` globally or per-client `audio_device`, then Settings → Save → **Review & apply** to push it). The app also sets ALSA volume via `amixer` + `alsactl store` and installs `/etc/systemd/system/diy-sonos-alsa-volume.service` + `/usr/local/bin/diy-sonos-apply-volume` for boot restore.
+Pick a valid device (e.g., `plughw:Device,0` or `hw:1,0`) and set it by hand for now (no picker in the UI yet — edit `~/.config/dev.jeffcottj.multispot/config.yml`, `snapclient.audio_device` globally or per-client `audio_device`, then Settings → Save → **Review & apply** to push it). The app also sets ALSA volume via `amixer` + `alsactl store` and installs `/etc/systemd/system/diy-sonos-alsa-volume.service` + `/usr/local/bin/diy-sonos-apply-volume` for boot restore.
 
 Test locally:
 
@@ -113,7 +113,7 @@ amixer scontrols; amixer get Master; amixer get PCM
 
 ## Spotify not visible / OAuth
 
-If “DIY Sonos” doesn’t appear in Spotify:
+If “Multispot” doesn’t appear in Spotify:
 
 1. The in-app auto-flow isn't wired up yet, so here's the manual version that works today:
 
@@ -176,7 +176,7 @@ aplay -l; aplay -L | head -n 80
 systemctl cat snapclient
 ```
 
-Also share `~/.config/dev.jeffcottj.diy-sonos/config.yml` (the app’s config) and the timestamp when you started Spotify playback.
+Also share `~/.config/dev.jeffcottj.multispot/config.yml` (the app’s config) and the timestamp when you started Spotify playback.
 
 ## Common failure signatures
 

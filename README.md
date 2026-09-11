@@ -1,8 +1,16 @@
-# DIY Sonos
+# Multispot
 
 Turn small Linux devices into a Sonos-like synchronized multi-room audio system. A server device runs Spotify Connect and streams audio; client devices play back in perfect sync via USB DACs. Now with a cross-platform desktop app (Windows/macOS/Linux) that replaces the old bash toolchain.
 
 Tested hardware: Raspberry Pi 5 (server) and Raspberry Pi Zero 2 W units (clients).
+
+> **Renamed from DIY Sonos:** the app identifier changed to `dev.jeffcottj.multispot`,
+> so an existing install keeps its config under the old
+> `~/.config/dev.jeffcottj.diy-sonos` directory. Either move it
+> (`mv ~/.config/dev.jeffcottj.diy-sonos ~/.config/dev.jeffcottj.multispot`,
+> same for `~/.local/share/...`) or re-run device setup. On-device paths
+> (`/run/diy-sonos`, `/var/lib/diy-sonos`, …) are intentionally unchanged,
+> so deployed Pis keep working without a re-deploy.
 
 ## Audio Flow
 
@@ -27,17 +35,17 @@ snapclient (client)        snapclient (client)  ...
 
 ## Download & Install
 
-Latest release: **GitHub Releases** — `https://github.com/jeffcottj/diy-sonos/releases/latest`
+Latest release: **GitHub Releases** — `https://github.com/jeffcottj/multispot/releases/latest`
 
 | OS | Installer | Notes |
 |----|-----------|-------|
-| Windows 10/11 | `DIY_Sonos_x.y.z_x64-setup.exe` (NSIS) | WebView2 is downloaded via bootstrapper if missing |
-| macOS (Intel + Apple Silicon) | `DIY_Sonos_x.y.z_universal.dmg` | Drag to Applications. Universal binary (aarch64 + x86_64) |
-| Linux | `DIY_Sonos_x.y.z_amd64.AppImage` or `diy-sonos_x.y.z_amd64.deb` | AppImage is portable; deb installs via `sudo dpkg -i` |
+| Windows 10/11 | `Multispot_x.y.z_x64-setup.exe` (NSIS) | WebView2 is downloaded via bootstrapper if missing |
+| macOS (Intel + Apple Silicon) | `Multispot_x.y.z_universal.dmg` | Drag to Applications. Universal binary (aarch64 + x86_64) |
+| Linux | `Multispot_x.y.z_amd64.AppImage` or `multispot_x.y.z_amd64.deb` | AppImage is portable; deb installs via `sudo dpkg -i` |
 
-The app is **unsigned** (public GitHub Releases, no Apple Developer ID / EV cert). Tauri updater uses its own minisign keys (`latest.json` is signed; the app verifies updates independently). The OS will warn on first launch:
+The app is **unsigned** (public GitHub Releases, no Apple Developer ID / EV cert), and updates are manual for now — download the new installer from Releases (there is no in-app updater). The OS will warn on first launch:
 
-- **macOS Gatekeeper**: Finder → Right-click `DIY Sonos.app` → **Open** → **Open** in the dialog. Subsequent launches work normally. Or: System Settings → Privacy & Security → **Open Anyway**.
+- **macOS Gatekeeper**: Finder → Right-click `Multispot.app` → **Open** → **Open** in the dialog. Subsequent launches work normally. Or: System Settings → Privacy & Security → **Open Anyway**.
 - **Windows SmartScreen**: “Windows protected your PC” → **More info** → **Run anyway**.
 
 
@@ -61,7 +69,7 @@ Open the app (Devices tab):
 
    The plan is for the app to do all of that itself (restart → poll journal → auto-tunnel → open browser → watch for credentials). Not yet — your fleet's existing cached credentials keep playing fine meanwhile.
 
-5. **Play** — Open Spotify on any device and select **“DIY Sonos”**. The dashboard shows stream idle/playing state (audio pipe provides no track metadata — don’t hunt for it).
+5. **Play** — Open Spotify on any device and select **“Multispot”**. The dashboard shows stream idle/playing state (audio pipe provides no track metadata — don’t hunt for it).
 
 ## Using the app
 
@@ -74,7 +82,7 @@ Open the app (Devices tab):
   - If Snapcast or the webview rejects the cross-origin WebSocket (Origin check), the Rust fallback in `snapcast.rs` (tokio-tungstenite) bridges via Tauri events — same store shape.
 
 - **Settings** tab — Audio preset + codec/buffer/latency (with an automatic `Custom` state when you stray from presets), Spotify name/bitrate. Hit **Save config** and you get a **Review & apply** panel: dry-run preview per device (files that would change, services that would restart), then **Apply to devices**. Anything deeper still lives in `config.yml` directly.
-  - Config is stored at `app_config_dir()/config.yml` (`dev.jeffcottj.diy-sonos`) via `serde_yaml`. Comments are not preserved (the UI replaces hand-editing for the common stuff).
+  - Config is stored at `app_config_dir()/config.yml` (`dev.jeffcottj.multispot`) via `serde_yaml`. Comments are not preserved (the UI replaces hand-editing for the common stuff).
   - Device passwords are never persisted; the app key is the only credential stored.
 
 ## Device-side facts (what the app manages)
@@ -108,8 +116,8 @@ npm run build        # tsc && vite build
 
 # Backend checks (from src-tauri)
 cargo fmt --check
-cargo clippy -- -D warnings
-cargo test
+cargo clippy --locked -- -D warnings
+cargo test --locked
 
 # Desktop dev (Tauri)
 npm run tauri dev
@@ -118,12 +126,12 @@ npm run tauri build -- --no-bundle  # CI check without bundling
 
 # One-shot verification (repo root)
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 npm run build
 ```
 
-Distribution: `release.yml` builds on tag `v*` via `tauri-apps/tauri-action@v0` (windows-latest, macos-latest, ubuntu-22.04) and publishes installers + `latest.json` to the GitHub Release. Updater signing keys are generated once (`npm run tauri signer generate`); private key + passphrase stored as repo secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`; public key embedded in `tauri.conf.json` under `plugins.updater.pubkey`.
+Distribution: `release.yml` builds on tag `v*` via `tauri-apps/tauri-action@v0` (windows-latest, macos-latest, ubuntu-22.04) and publishes installers to the GitHub Release. (`TAURI_SIGNING_*` repo secrets are dormant leftovers from the removed auto-updater — kept in case it returns.)
 
 ## License
 

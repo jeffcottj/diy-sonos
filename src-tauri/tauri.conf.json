@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "DIY Sonos",
+  "productName": "Multispot",
   "version": "1.0.0",
-  "identifier": "dev.jeffcottj.diy-sonos",
+  "identifier": "dev.jeffcottj.multispot",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "DIY Sonos",
+        "title": "Multispot",
         "width": 1100,
         "height": 750,
         "minWidth": 900,

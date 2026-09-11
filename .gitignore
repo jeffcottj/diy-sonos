@@ -1,5 +1,5 @@
-.diy-sonos.generated.yml
-.diy-sonos-version
+.multispot.generated.yml
+.multispot-version
 clients.yml
 *.backup
 .DS_Store

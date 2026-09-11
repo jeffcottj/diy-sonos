@@ -379,7 +379,7 @@ export function Settings() {
       )}
 
       <p className="text-[11px] text-zinc-600">
-        App config stored at <code className="font-mono">~/.config/dev.jeffcottj.diy-sonos/config.yml</code>. Device passwords are never
+        App config stored at <code className="font-mono">~/.config/dev.jeffcottj.multispot/config.yml</code>. Device passwords are never
         persisted; the app key is the only credential stored.
       </p>
     </div>

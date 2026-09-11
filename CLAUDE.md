@@ -21,8 +21,8 @@ Use these to verify correctness (repo root):
 ```bash
 # Backend
 cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
-cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --locked --manifest-path src-tauri/Cargo.toml -- -D warnings
+cargo test --locked --manifest-path src-tauri/Cargo.toml
 
 # Frontend
 npm run build   # tsc && vite build
@@ -43,7 +43,7 @@ Repo layout:
 
 ```
 /
-  src/                  # React 18 + Vite + TS frontend
+  src/                  # React 19 + Vite 8 + TS frontend
   src-tauri/
     src/
       config.rs         # AppConfig model, load/save, import, validation
@@ -59,7 +59,7 @@ Repo layout:
   README.md, LICENSE, CLAUDE.md
 ```
 
-Crates: `tauri` 2, `tauri-plugin-opener`; `russh` (no `russh-sftp` — files go over exec); `mdns-sd`; `tokio`, `serde`, `serde_yaml`, `anyhow`. Frontend: React 18, TypeScript, Vite, Tailwind 4, `zustand`; no component library. `npm` package manager. Do NOT use `snapcast-control` crate — hand-rolled thin JSON-RPC client (~8 methods).
+Crates: `tauri` 2, `tauri-plugin-opener`; `russh` (no `russh-sftp` — files go over exec); `mdns-sd`; `tokio`, `serde`, `serde_yaml`, `anyhow`. Frontend: React 19, TypeScript, Vite 8, Tailwind 4, `zustand`; no component library. `npm` package manager. Do NOT use `snapcast-control` crate — hand-rolled thin JSON-RPC client (~8 methods).
 
 Snapcast control: frontend opens `new WebSocket("ws://<server_ip>:1780/jsonrpc")` directly, sends `Server.GetStatus`, and keeps state live from notifications (`Client.OnConnect/OnDisconnect/OnVolumeChanged/...`, `Group.OnMute/OnStreamChanged`, `Server.OnUpdate`). Methods: `Server.GetStatus`, `Server.DeleteClient`, `Client.SetVolume`, `Client.SetLatency`, `Client.SetName`, `Group.SetMute`, `Group.SetClients`, `Group.SetName`. Clients matched by `client.host.ip` against app device IPs. If cross-origin WebSocket is rejected, Rust fallback in `snapcast.rs` (tokio-tungstenite) bridges via Tauri events.
 
@@ -77,7 +77,7 @@ Tauri commands (backend API surface):
 
 Progress events: `deploy-log {deviceId, step, level, line}` and `deploy-status {deviceId, phase, done}`.
 
-Config storage: `tauri::Manager::app_config_dir()` + `config.yml` (`dev.jeffcottj.diy-sonos`), via `serde_yaml`. App-owned SSH keypair at `app_data_dir()/id_ed25519` (0600, ed25519).
+Config storage: `tauri::Manager::app_config_dir()` + `config.yml` (`dev.jeffcottj.multispot`), via `serde_yaml`. App-owned SSH keypair at `app_data_dir()/id_ed25519` (0600, ed25519).
 
 Config schema (same keys as old `config.yml` for legacy import, plus additions):
 
@@ -98,7 +98,7 @@ snapserver: { fifo_path, sampleformat, codec, buffer_ms, port, control_port }
 snapclient: { audio_device, output_volume, latency_ms, instance }
 ```
 
-Defaults: `device_name "DIY Sonos"`, `bitrate 320`, `normalise true`, `initial_volume 90`, `cache_dir /var/cache/librespot`, `oauth_callback_port 4000`, `device_type "speaker"`, `fifo_path /run/diy-sonos/snapfifo`, `sampleformat "44100:16:2"`, `codec flac`, `buffer_ms 1000`, `port 1704`, `control_port 1780`, `audio_device auto`, `output_volume 90`, `latency_ms 0`, `instance 1`. Profile `advanced` maps: `codec pcm`, `buffer_ms 800`, `snapclient.latency_ms -20`. Snapcast version pin: `SNAPCAST_VERSION = "0.31.0"`.
+Defaults: `device_name "Multispot"`, `bitrate 320`, `normalise true`, `initial_volume 90`, `cache_dir /var/cache/librespot`, `oauth_callback_port 4000`, `device_type "speaker"`, `fifo_path /run/diy-sonos/snapfifo`, `sampleformat "44100:16:2"`, `codec flac`, `buffer_ms 1000`, `port 1704`, `control_port 1780`, `audio_device auto`, `output_volume 90`, `latency_ms 0`, `instance 1`. Profile `advanced` maps: `codec pcm`, `buffer_ms 800`, `snapclient.latency_ms -20`. Snapcast version pin: `SNAPCAST_VERSION = "0.31.0"`.
 
 Validation (ported from `scripts/common.sh:146-219`): `validate_server_ip` IPv4 + octet 0-255; `bitrate ∈ {96,160,320}`; `codec ∈ {flac,pcm}`; `audio_device ∈ {auto,default,hw:N,N,plughw:N,N}`; `output_volume` 0-100 int; `buffer_ms` 100-10000; `latency_ms` ±5000 (global + per-client). All enforced in `save_config`.
 
@@ -112,7 +112,7 @@ OAuth: helpers ported from `scripts/librespot-auth-helper.sh:28-56` (`has_cached
 
 ## Config System
 
-- App config at `app_config_dir()/config.yml` (identifier `dev.jeffcottj.diy-sonos`), written via `serde_yaml`. App key at `app_data_dir()/id_ed25519`.
+- App config at `app_config_dir()/config.yml` (identifier `dev.jeffcottj.multispot`), written via `serde_yaml`. App key at `app_data_dir()/id_ed25519`.
 - Legacy import: `import_legacy_config(path)` parses an old repo `config.yml` (accepts old shape incl. `clients[].ip/ssh_user/output_volume`; ignores unknown keys). Config schema keeps same top-level keys so import is 1:1.
 - Profiles live in the Settings form (`basic`/`advanced` fill codec/buffer/latency, edits flip to `custom`); `save_config` persists exactly what's shown and validates ranges. `AppConfig::apply_profile()` still exists but nothing calls it on save paths (round-trip test proves it).
 

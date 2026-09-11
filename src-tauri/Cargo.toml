@@ -1,13 +1,13 @@
 [package]
-name = "diy-sonos"
+name = "multispot"
 version = "1.0.0"
-description = "DIY Sonos Desktop"
+description = "Multispot Desktop"
 authors = ["jeffcottj"]
 edition = "2021"
 rust-version = "1.89"
 
 [lib]
-name = "diy_sonos_lib"
+name = "multispot_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

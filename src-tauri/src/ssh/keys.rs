@@ -34,7 +34,7 @@ pub fn ensure_app_keypair(app_data_dir: &Path) -> Result<(), anyhow::Error> {
     }
 
     let pub_str = format!(
-        "{} diy-sonos@desktop\n",
+        "{} multispot@desktop\n",
         pubkey
             .to_openssh()
             .map_err(|e| anyhow!("encode pubkey: {}", e))?

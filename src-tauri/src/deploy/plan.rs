@@ -870,17 +870,17 @@ mod tests {
     }
 
     /// Live read-only validation against the real fleet. Ignored by default;
-    /// run with `DIY_SONOS_LIVE_TEST=1 cargo test live_preview -- --nocapture`.
+    /// run with `MULTISPOT_LIVE_TEST=1 cargo test live_preview -- --nocapture`.
     /// Asserts preflight + plan + preview work; preview never mutates.
     #[tokio::test]
     async fn live_preview_against_fleet() {
-        if std::env::var("DIY_SONOS_LIVE_TEST").is_err() {
+        if std::env::var("MULTISPOT_LIVE_TEST").is_err() {
             return;
         }
-        let server = std::env::var("DIY_SONOS_TEST_SERVER").unwrap_or("192.168.68.104".to_string());
+        let server = std::env::var("MULTISPOT_TEST_SERVER").unwrap_or("192.168.68.104".to_string());
         let home = std::env::var("HOME").expect("HOME");
         let dir =
-            std::path::PathBuf::from(format!("{}/.local/share/dev.jeffcottj.diy-sonos", home));
+            std::path::PathBuf::from(format!("{}/.local/share/dev.jeffcottj.multispot", home));
         let cfg = crate::config::load_config().expect("load app config");
         let remote = crate::ssh::Remote {
             host: server.as_str(),
@@ -918,7 +918,7 @@ mod tests {
         assert_eq!(preview.len(), preview2.len());
 
         // Client role against the speaker Pi: audio must resolve off `default`.
-        let client = std::env::var("DIY_SONOS_TEST_CLIENT").unwrap_or("192.168.68.114".to_string());
+        let client = std::env::var("MULTISPOT_TEST_CLIENT").unwrap_or("192.168.68.114".to_string());
         let remote_c = crate::ssh::Remote {
             host: client.as_str(),
             port: 22,
