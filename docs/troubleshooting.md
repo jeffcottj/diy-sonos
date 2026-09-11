@@ -1,14 +1,16 @@
 # Troubleshooting
 
-This guide is for the **DIY Sonos desktop app** (Tauri + Rust). The bash toolchain (`setup.sh`, `deploy.sh`, etc.) no longer exists. All orchestration — rendering configs, uploading via SFTP, running remote commands over SSH — is done by the app. Remote privileged actions remain ordinary shell commands (`apt-get`, `systemctl`, `amixer`, `journalctl`) that the app orchestrates; it doesn’t replace them.
+This guide is for the **DIY Sonos desktop app** (Tauri + Rust). The bash toolchain (`setup.sh`, `deploy.sh`, etc.) no longer exists. All orchestration — rendering configs, pushing file contents over the same SSH connection (base64-staged, no SFTP involved), running remote commands over SSH — is done by the app. Remote privileged actions remain ordinary shell commands (`apt-get`, `systemctl`, `amixer`, `journalctl`) that the app orchestrates; it doesn’t replace them.
 
 Device-side facts (services, FIFO, ports) are unchanged; only how you invoke them has moved from scripts to the app.
 
 ## Quick way: the app
 
-- **Device detail → Doctor** — runs per-device health checks and returns `CheckResult { status: pass|fail|warn|info, message, explanation, remediation }`. Failures are “must-fix”, warns are optional. Remediation now says “Redeploy this device” instead of shell commands.
-- **Device detail → Deploy log** — live `deploy-log {deviceId, step, level, line}` + `deploy-status {deviceId, phase, done}` per device.
-- **Connect Spotify** panel — handles the OAuth tunnel automatically (no manual `ssh -L`).
+A quick heads-up on what's real in the app today and what isn't (all of it's getting there):
+
+- **Doctor view** — not built yet. The health-check logic lives in `doctor.rs` as tested helpers, but no button runs it against your boxes. The SSH commands below are the real deal for now.
+- **Deploy preview + log** — this part works. Fresh devices get **Set up** on their Devices row, and Settings saves open a **Review & apply** panel: dry-run diffs per box, then a live log while it runs.
+- **Connect Spotify auto-flow** — also still manual (see the OAuth section for steps that work today).
 
 If you prefer manual SSH, `ssh <user>@<host>` and use the commands below; they’re the same ones the app runs via `sudo -S -p ''`.
 
@@ -29,7 +31,7 @@ systemctl is-active librespot snapserver snapclient avahi-daemon
 sudo journalctl -u librespot -u snapserver -u snapclient -p err -n 15 --no-pager
 ```
 
-If a service is not active/enabled/installed, use **Redeploy this device** in the app (re-renders `*.service` units if-changed, `daemon-reload`, enable + restart only if configs changed). The doctor’s remediation will say “Redeploy”.
+If a service is not active/enabled/installed, push a fix from the app with Settings → Save → **Review & apply** (re-renders `*.service` units if-changed, `daemon-reload`, enable + restart only if configs changed). Once a Doctor view exists, its remediation will point at Review & apply.
 
 ## Network / DNS failures
 
@@ -47,18 +49,18 @@ nc -vz github.com 443
 
 ## Snapserver connectivity
 
-Doctor checks listeners via `ss -ltnp` for `0.0.0.0:1704` and `0.0.0.0:1780`. If fail:
+The server should be listening on `0.0.0.0:1704` and `0.0.0.0:1780`. If not:
 
 ```bash
 sudo ss -ltnp | grep -E ':(1704|1780)\b'
 sudo systemctl status snapserver --no-pager -l
 ```
 
-Client → server stream is TCP 1704; control is 1780. Verify no firewall blocks them. Redeploy server.
+Client → server stream is TCP 1704; control is 1780. Verify no firewall blocks them. If the units look wrong, Settings → Save → **Review & apply** re-renders them.
 
 ## FIFO
 
-Default path `/run/diy-sonos/snapfifo`. Doctor checks `[[ -p /run/diy-sonos/snapfifo ]]`.
+Default path `/run/diy-sonos/snapfifo`. It should be a pipe (`[[ -p … ]]`).
 
 - FIFO is created via `mkfifo`, persisted via `/etc/tmpfiles.d/snapfifo.conf`:
 
@@ -81,7 +83,7 @@ cat /etc/tmpfiles.d/snapfifo.conf
 cat /etc/sysctl.d/99-snapfifo.conf 2>/dev/null || echo "no sysctl override"
 ```
 
-If FIFO missing, redeploy server.
+If FIFO missing, a Settings save + **Review & apply** recreates it (the preview will show it planned).
 
 ## Audio device mismatch (clients)
 
@@ -95,7 +97,7 @@ aplay -l
 aplay -L | head -n 80
 ```
 
-Pick a valid device (e.g., `plughw:Device,0` or `hw:1,0`) and set it per-client in **Settings → Clients → audio_device** (or globally via `snapclient.audio_device` if `auto` should detect correctly). Then redeploy that client. The app also sets ALSA volume via `amixer` + `alsactl store` and installs `/etc/systemd/system/diy-sonos-alsa-volume.service` + `/usr/local/bin/diy-sonos-apply-volume` for boot restore.
+Pick a valid device (e.g., `plughw:Device,0` or `hw:1,0`) and set it by hand for now (no picker in the UI yet — edit `~/.config/dev.jeffcottj.diy-sonos/config.yml`, `snapclient.audio_device` globally or per-client `audio_device`, then Settings → Save → **Review & apply** to push it). The app also sets ALSA volume via `amixer` + `alsactl store` and installs `/etc/systemd/system/diy-sonos-alsa-volume.service` + `/usr/local/bin/diy-sonos-apply-volume` for boot restore.
 
 Test locally:
 
@@ -113,7 +115,17 @@ amixer scontrols; amixer get Master; amixer get PCM
 
 If “DIY Sonos” doesn’t appear in Spotify:
 
-1. In the app, open **Connect Spotify** (or `start_oauth` via command). The app restarts `librespot.service` and polls `journalctl -u librespot --no-pager -n 400` for the last `https://accounts\.spotify\.com/[^ ]+` URL, starts a local port-forward (`127.0.0.1:4000` → device `127.0.0.1:4000` via russh `direct-tcpip`), opens the URL in your browser (via `tauri-plugin-opener`), and emits `oauth-url {url}` events until credentials appear in `cache_dir` (`/var/cache/librespot/*credentials*` or `*.json` via `ls` glob). No manual `ssh -L` needed.
+1. The in-app auto-flow isn't wired up yet, so here's the manual version that works today:
+
+```bash
+sudo systemctl restart librespot.service
+journalctl -u librespot --no-pager -n 400 | grep -Eo 'https://accounts\.spotify\.com/[^ ]+' | tail -n 1
+# on your laptop, in another terminal:
+ssh -L 4000:127.0.0.1:4000 <user>@<server_ip>
+# then open the URL from the journal in your browser
+```
+
+The endgame is the app doing all of that itself (restart → poll the journal → auto-tunnel → open the browser → watch the credential cache). Almost there, not yet.
 
 2. Manual check (SSH to server):
 
@@ -144,7 +156,7 @@ Even with persistence, USB card renumbering can break `hw:1,0` references; prefe
 
 ## Collecting diagnostics to share
 
-Via the app: **Device detail → Doctor** and **Deploy log** → copy output.
+Via the app: a device row’s setup/deploy log, or the Settings **Review & apply** preview → copy the output.
 
 Via SSH (if asked):
 
@@ -170,15 +182,15 @@ Also share `~/.config/dev.jeffcottj.diy-sonos/config.yml` (the app’s config) a
 
 ### A) librespot logs `Broken pipe (os error 32)`
 
-FIFO consumer missing (snapserver not running). Check `snapserver.service` active, `librespot.service` uses `--backend pipe --device /run/diy-sonos/snapfifo`, `/etc/snapserver.conf` has `source = pipe:///run/diy-sonos/snapfifo?...`. Redeploy server.
+FIFO consumer missing (snapserver not running). Check `snapserver.service` active, `librespot.service` uses `--backend pipe --device /run/diy-sonos/snapfifo`, `/etc/snapserver.conf` has `source = pipe:///run/diy-sonos/snapfifo?...`. Push a fix via Settings → Save → **Review & apply**.
 
 ### B) Client active but silent
 
-Usually ALSA device mismatch — `snapclient.service` `--soundcard` is `default` or wrong. Check `aplay -l` and redeploy with correct per-client `audio_device`.
+Usually ALSA device mismatch — `snapclient.service` `--soundcard` is `default` or wrong. Check `aplay -l`, fix `audio_device` (config file for now, see above), and apply.
 
 ### C) One client works with speaker-test but not Spotify
 
-Local audio OK, stream path broken: check server FIFO `lsof`, snapserver logs for connect/disconnect, client snapclient logs for decode errors. Redeploy server and client.
+Local audio OK, stream path broken: check server FIFO `lsof`, snapserver logs for connect/disconnect, client snapclient logs for decode errors. Re-apply settings to server and client.
 
 ### Ports
 
@@ -189,4 +201,4 @@ Local audio OK, stream path broken: check server FIFO `lsof`, snapserver logs fo
 | 4000 | librespot OAuth callback (`spotify.oauth_callback_port`) |
 | 5353 | mDNS via avahi (Spotify discovery) |
 
-All references to `./setup.sh doctor`, `./deploy.sh`, `./first-run.sh`, and `config.yml` in the repo root now map to GUI flows: doctor = app’s Doctor, deploy = app’s Deploy (with live log), config = Settings UI (stored at `app_config_dir()/config.yml`).
+All references to `./setup.sh doctor`, `./deploy.sh`, `./first-run.sh`, and `config.yml` in the repo root now map to GUI flows: deploy = Settings → Save → **Review & apply** (or **Set up** on a fresh device row, both with live logs), config = the Settings UI plus `config.yml` directly for the bits with no UI yet (stored at `app_config_dir()/config.yml`). A Doctor view is still on the to-do list.

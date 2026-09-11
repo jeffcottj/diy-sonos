@@ -326,17 +326,6 @@ pub async fn exec_sudo(
     result
 }
 
-/// SFTP upload helper shape — uploads rendered content via russh-sftp.
-/// Stub for Phase 3; Phase 4 will implement SFTP read/write for if-changed.
-pub async fn sftp_upload(
-    _host: &str,
-    _port: u16,
-    _remote_path: &str,
-    _content: &[u8],
-) -> Result<(), anyhow::Error> {
-    Err(anyhow!("sftp_upload not yet implemented"))
-}
-
 /// Local port forwarding shape: `TcpListener` on 127.0.0.1:<local_port> splicing to remote 127.0.0.1:<remote_port> via russh direct-tcpip.
 /// Stub for Phase 3; Phase 5 OAuth will wire this.
 pub async fn start_port_forward(

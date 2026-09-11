@@ -54,32 +54,34 @@ Open the app (Devices tab):
 
 3. **Audio** — In Settings, pick the `basic` (flac, buffer 1000 ms, latency 0) or `advanced` (pcm, buffer 800 ms, latency -20) preset to fill the fields, or edit codec / buffer / latency directly — that flips the profile to `Custom`. Saved exactly as shown.
 
-4. **Connect Spotify** — If credentials are already cached (`/var/cache/librespot/*credentials*` or `*.json`), the step is skipped. Otherwise the app:
-   - Restarts `librespot.service` on the server
-   - Polls `journalctl -u librespot --no-pager -n 400` for the last `https://accounts\.spotify\.com/[^ ]+` URL
-   - Starts a local port-forward (`127.0.0.1:4000` on the laptop → `127.0.0.1:4000` on the device via russh `direct-tcpip`) and opens the URL in your default browser
-   - Emits `oauth-url {url}` events until credentials appear, then stops the forward
+4. **Connect Spotify** — Still being wired up, so for now this is a manual step (the button doesn't do the tunnel dance yet). On the server:
+   - `sudo systemctl restart librespot.service`
+   - `journalctl -u librespot --no-pager -n 400 | grep -Eo 'https://accounts\.spotify\.com/[^ ]+' | tail -n 1`
+   - Open that URL on your laptop with an SSH tunnel in place: `ssh -L 4000:127.0.0.1:4000 <user>@<server_ip>`, then complete login in the browser
+   - Confirm with `ls /var/cache/librespot/*credentials* /var/cache/librespot/*.json`
+
+   The plan is for the app to do all of that itself (restart → poll journal → auto-tunnel → open browser → watch for credentials). Not yet — your fleet's existing cached credentials keep playing fine meanwhile.
 
 5. **Play** — Open Spotify on any device and select **“DIY Sonos”**. The dashboard shows stream idle/playing state (audio pipe provides no track metadata — don’t hunt for it).
 
 ## Using the app
 
-- **Devices** tab — Connected-device roster with live status and configured roles (`server` / `client`). Scan, add, configure, and forget devices; **Connect Spotify** lives here too.
+- **Devices** tab — Connected-device roster with live status and configured roles (`server` / `client`). Scan, add, configure, and forget devices; fresh boxes get a **Set up** button that previews the full install before touching anything; **Connect Spotify** lives here too.
 - **Dashboard** tab — Live Snapcast control. The frontend opens `new WebSocket("ws://<server_ip>:1780/jsonrpc")` directly, sends `Server.GetStatus`, and keeps state live from notifications (`Client.OnConnect/OnDisconnect/OnVolumeChanged/...`, `Group.OnMute/OnStreamChanged`, `Server.OnUpdate`). Controls:
-  - Per-client: volume slider (`Client.SetVolume`), mute, latency (`Client.SetLatency`), rename (`Client.SetName` seeded from `clients[].name`)
-  - Per-group: group mute (`Group.SetMute`), drag/toggle clients between groups (`Group.SetClients`), delete stale clients (`Server.DeleteClient`)
+  - Per-client: volume slider (`Client.SetVolume`), mute, latency (`Client.SetLatency`), rename (`Client.SetName`)
+  - Per-group: group mute (`Group.SetMute`), move clients between groups (`Group.SetClients`), delete stale clients (`Server.DeleteClient`, plus a one-click **Delete offline** for ghosts)
   - Badges: client online/offline (`Client.OnConnect/OnDisconnect`), stream idle/playing from `stream.status`
   - Clients are matched to app devices by `client.host.ip` (`::ffff:` IPv4-mapped prefix stripped for display)
   - If Snapcast or the webview rejects the cross-origin WebSocket (Origin check), the Rust fallback in `snapcast.rs` (tokio-tungstenite) bridges via Tauri events — same store shape.
 
-- **Settings** tab — All `config.yml` fields (profile, spotify/snapserver/snapclient sections, per-client `name`/`latency_ms`/`audio_device`). Changes that affect rendered files prompt **Apply changes** → re-run deploy for affected devices.
-  - Config is stored at `app_config_dir()/config.yml` (`dev.jeffcottj.diy-sonos`) via `serde_yaml`. Comments are not preserved (the UI replaces hand-editing; see schema in Settings).
+- **Settings** tab — Audio preset + codec/buffer/latency (with an automatic `Custom` state when you stray from presets), Spotify name/bitrate. Hit **Save config** and you get a **Review & apply** panel: dry-run preview per device (files that would change, services that would restart), then **Apply to devices**. Anything deeper still lives in `config.yml` directly.
+  - Config is stored at `app_config_dir()/config.yml` (`dev.jeffcottj.diy-sonos`) via `serde_yaml`. Comments are not preserved (the UI replaces hand-editing for the common stuff).
   - Device passwords are never persisted; the app key is the only credential stored.
 
 ## Device-side facts (what the app manages)
 
 - Services: `librespot.service` + `snapserver.service` on server (`After=librespot.service`, `Wants=librespot.service`, not `Requires`); `snapclient.service` on clients (`After=network-online.target sound.target`)
-- FIFO: `/run/diy-sonos/snapfifo` (default), created via `mkfifo`, persisted via `/etc/tmpfiles.d/snapfifo.conf` as `d <dir> 0755 root root - -` + `p <path> 0660 root audio - -` + `systemd-tmpfiles --create`; stale old-path FIFO removed on path change; if path is under `/tmp` or `/var/tmp`, `fs.protected_fifos=0` via `/etc/sysctl.d/99-snapfifo.conf` else removed/restored to `1`
+- FIFO: `/run/diy-sonos/snapfifo` (default), created via `mkfifo` (replacing a stray non-pipe file if one squats on the path), persisted via `/etc/tmpfiles.d/snapfifo.conf` as `d <dir> 0755 root root - -` + `p <path> 0660 root audio - -` + `systemd-tmpfiles --create`; if path is under `/tmp` or `/var/tmp`, `fs.protected_fifos=0` via `/etc/sysctl.d/99-snapfifo.conf` else removed/restored to `1`
 - Snapserver config: `/etc/snapserver.conf` from `snapserver.conf.tmpl` (`sampleformat`, `codec`, `buffer`, `source = pipe:///…`)
 - Ports: `1704` (audio), `1780` (HTTP control), `4000` (librespot OAuth callback, configurable via `spotify.oauth_callback_port`), `5353` (mDNS via avahi)
 - Snapcast deb URL: `https://github.com/badaix/snapcast/releases/download/v{VER}/snap{server|client}_{VER}-1_{ARCH}_{CODENAME}.deb` with arch map `aarch64→arm64, armv7l|armv6l→armhf, x86_64→amd64` and codename fallback `bookworm → bullseye`
@@ -88,17 +90,17 @@ Open the app (Devices tab):
 
 ## Troubleshooting
 
-See `docs/troubleshooting.md` for device-side diagnostics. Quick checks via SSH or the app’s **Device detail → Doctor**:
+See `docs/troubleshooting.md` for device-side diagnostics. Quick checks via SSH:
 
-- **Doctor** runs per-device checks: service installed/enabled/active (`librespot`, `snapserver`, `avahi-daemon` on server; `snapclient` + `alsa-restore` on client), listeners on `1704`/`1780`, FIFO is a pipe, resolved audio device ≠ `default` (warn), recent errors `journalctl -u <unit> -p err -n 15`. Results show pass/fail/warn + explanation + remediation (“Redeploy this device”).
-- **Deploy log** shows per-step output; idempotent re-run on an unchanged fleet reports “unchanged” and no service restarts (check `systemctl show -p ActiveEnterTimestamp <service>`).
+- A per-device **Doctor** view doesn't exist yet — for now, the checks are the manual commands below, and the closest in-app diagnostic is a deploy **preview** (dry run showing exactly what differs on the box).
+- Deploy output streams per step in the setup/apply panels; an unchanged fleet reports “unchanged” files and no service restarts (verify with `systemctl show -p ActiveEnterTimestamp <service>`).
 - **Dashboard offline badge**: client power off → offline within seconds via `Client.OnDisconnect`.
 
-Common fixes: `Redeploy this device` from the app (re-renders configs if-changed, fixes FIFO/tmpfiles/sysctl, reinstalls debs if needed). For OAuth issues, use **Connect Spotify** again (tunnel is automatic).
+Common fixes: Settings → Save → **Review & apply** (re-renders configs if-changed, fixes FIFO/tmpfiles/sysctl, reinstalls debs if needed). For OAuth issues, redo the manual Connect Spotify steps above for now.
 
 ## Development
 
-Prerequisites: Rust stable (via `rustup`), Node 20, npm.
+Prerequisites: Rust stable (via `rustup`), Node 20 or newer, npm. (`cargo` lives in `~/.cargo/bin` — fish users: `fish_add_path ~/.cargo/bin`.)
 
 ```bash
 # Frontend dev (Vite)
