@@ -12,9 +12,11 @@ pub fn ensure_app_keypair(app_data_dir: &Path) -> Result<(), anyhow::Error> {
     std::fs::create_dir_all(app_data_dir).context("create app_data_dir")?;
 
     // Use ssh-key crate to generate ed25519 keypair
-    let private_key =
-        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
-            .map_err(|e| anyhow!("generate ed25519 key: {}", e))?;
+    let private_key = ssh_key::PrivateKey::random(
+        &mut russh::keys::key::safe_rng(),
+        ssh_key::Algorithm::Ed25519,
+    )
+    .map_err(|e| anyhow!("generate ed25519 key: {}", e))?;
 
     let pubkey = private_key.public_key().clone();
 

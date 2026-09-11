@@ -73,7 +73,7 @@ pub fn sudo_wrap(command: &str) -> String {
 /// installed the key, or when `password` is None.
 fn load_app_keypair(
     app_data_dir: &Path,
-) -> Result<std::sync::Arc<russh::keys::key::KeyPair>, anyhow::Error> {
+) -> Result<std::sync::Arc<russh::keys::PrivateKey>, anyhow::Error> {
     ensure_app_keypair(app_data_dir)?;
     let pem = std::fs::read_to_string(app_data_dir.join("id_ed25519"))
         .map_err(|e| anyhow!("read app private key: {}", e))?;
@@ -122,7 +122,7 @@ async fn connect_session(
             .authenticate_password(ssh_user, password)
             .await
             .map_err(|e| anyhow!("SSH password auth to {} failed: {}", host, e))?;
-        if !authed {
+        if !authed.success() {
             return Err(anyhow!(
                 "SSH password auth rejected for {}@{}",
                 ssh_user,
@@ -132,10 +132,13 @@ async fn connect_session(
     } else {
         let keypair = load_app_keypair(app_data_dir)?;
         let authed = session
-            .authenticate_publickey(ssh_user, keypair)
+            .authenticate_publickey(
+                ssh_user,
+                russh::keys::PrivateKeyWithHashAlg::new(keypair, None),
+            )
             .await
             .map_err(|e| anyhow!("SSH key auth to {} failed: {}", host, e))?;
-        if !authed {
+        if !authed.success() {
             return Err(anyhow!("SSH key auth rejected for {}@{}", ssh_user, host));
         }
     }
@@ -477,17 +480,21 @@ struct FetchHostKeyHandler {
     fingerprint: Arc<Mutex<Option<String>>>,
 }
 
-#[async_trait::async_trait]
 impl russh::client::Handler for FetchHostKeyHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh::keys::key::PublicKey,
+        server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let fingerprint = format!("SHA256:{}", server_public_key.fingerprint());
-        *self.fingerprint.lock().await = Some(fingerprint);
-        Ok(true)
+        match server_public_key {
+            russh::keys::PublicKeyOrCertificate::PublicKey { key, .. } => {
+                let fingerprint = key.fingerprint(russh::keys::HashAlg::Sha256).to_string();
+                *self.fingerprint.lock().await = Some(fingerprint);
+                Ok(true)
+            }
+            russh::keys::PublicKeyOrCertificate::Certificate(_) => Ok(false),
+        }
     }
 }
 
@@ -551,6 +558,17 @@ mod tests {
         let fp = fingerprint_sha256(b"testkey");
         assert!(fp.starts_with("SHA256:"));
         assert!(fp.len() > 7);
+    }
+
+    #[test]
+    fn server_key_fingerprint_matches_tofu_store_format() {
+        let key = ssh_key::PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f",
+        )
+        .unwrap();
+        let fp = key.fingerprint(russh::keys::HashAlg::Sha256).to_string();
+        assert!(fp.starts_with("SHA256:"));
+        assert!(!fp.contains('='));
     }
 
     #[tokio::test]
