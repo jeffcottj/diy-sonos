@@ -13,7 +13,7 @@ pub fn ensure_app_keypair(app_data_dir: &Path) -> Result<(), anyhow::Error> {
 
     // Use ssh-key crate to generate ed25519 keypair
     let private_key =
-        ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
+        ssh_key::PrivateKey::random(&mut ssh_key::rand_core::OsRng, ssh_key::Algorithm::Ed25519)
             .map_err(|e| anyhow!("generate ed25519 key: {}", e))?;
 
     let pubkey = private_key.public_key().clone();

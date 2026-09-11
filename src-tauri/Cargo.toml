@@ -24,10 +24,9 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 russh = { version = "0.44", features = [] }
 mdns-sd = "0.21"
-ssh-key = { version = "0.6", features = ["ed25519"] }
+ssh-key = { version = "0.6", features = ["ed25519", "getrandom"] }
 regex = "1"
 sha2 = "0.11"
 data-encoding = "2"
-rand = "0.8"
 [dev-dependencies]
 tempfile = "3"

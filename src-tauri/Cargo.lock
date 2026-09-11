@@ -1036,7 +1036,6 @@ dependencies = [
  "async-trait",
  "data-encoding",
  "mdns-sd",
- "rand",
  "regex",
  "russh",
  "serde",
