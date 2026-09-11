@@ -6,7 +6,6 @@ clients.yml
 
 # Tauri / Rust
 /src-tauri/target/
-/src-tauri/Cargo.lock
 
 # Frontend
 /node_modules/
