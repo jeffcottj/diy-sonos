@@ -28,6 +28,6 @@ ssh-key = { version = "0.6", features = ["ed25519"] }
 regex = "1"
 sha2 = "0.11"
 data-encoding = "2"
-rand = "0.8"
+rand = "0.10"
 [dev-dependencies]
 tempfile = "3"
