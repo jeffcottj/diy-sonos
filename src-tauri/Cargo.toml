@@ -29,7 +29,7 @@ russh = { version = "0.44", features = [] }
 mdns-sd = "0.13"
 ssh-key = { version = "0.6", features = ["ed25519"] }
 regex = "1"
-sha2 = "0.10"
+sha2 = "0.11"
 data-encoding = "2"
 rand = "0.8"
 [dev-dependencies]
