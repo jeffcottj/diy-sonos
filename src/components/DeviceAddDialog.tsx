@@ -1,34 +1,56 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-
-type DiscoveredDevice = {
-  hostname: string;
-  ip: string;
-  port: number;
-  likely_pi: boolean;
-};
 
 type ConnectResult =
   | { kind: "ok"; status: { host: string; port: number; reachable: boolean; host_key_fingerprint?: string } }
   | { kind: "host_key_untrusted"; fingerprint: string; host: string };
+
+type SweptDevice = {
+  ip: string;
+  port: number;
+  banner: string | null;
+  likely_pi: boolean;
+};
+
+type NetworkScan = {
+  subnet: string;
+  devices: SweptDevice[];
+};
+
+type BackendConfig = {
+  server_ip: string;
+  ssh_user: string;
+};
 
 export function DeviceAddDialog({ onAdded }: { onAdded?: (ip: string) => void }) {
   const [ip, setIp] = useState("");
   const [username, setUsername] = useState("pi");
   const [password, setPassword] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [devices, setDevices] = useState<DiscoveredDevice[]>([]);
+  const [swept, setSwept] = useState<SweptDevice[]>([]);
+  const [scannedSubnet, setScannedSubnet] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [pendingFingerprint, setPendingFingerprint] = useState<string | null>(null);
   const [pendingHost, setPendingHost] = useState<string | null>(null);
+  const [pendingPort, setPendingPort] = useState<number | null>(null);
+  const SSH_PORT = 22;
+
+  useEffect(() => {
+    invoke<BackendConfig>("load_config")
+      .then((c) => {
+        if (c.ssh_user) setUsername(c.ssh_user);
+      })
+      .catch(() => {});
+  }, []);
 
   async function scan() {
     setScanning(true);
-    setStatus(null);
+    setStatus("Scanning your network for SSH… may take about a minute.");
     try {
-      const result = await invoke<DiscoveredDevice[]>("scan_mdns");
-      setDevices(result);
-      setStatus(`Found ${result.length} device(s)`);
+      const result = await invoke<NetworkScan>("scan_network");
+      setSwept(result.devices);
+      setScannedSubnet(result.subnet);
+      setStatus(`Found ${result.devices.length} SSH host(s) on ${result.subnet}`);
     } catch (e) {
       setStatus(`Scan failed: ${String(e)}`);
     } finally {
@@ -46,20 +68,21 @@ export function DeviceAddDialog({ onAdded }: { onAdded?: (ip: string) => void })
     try {
       const res = await invoke<ConnectResult>("connect_device", {
         host: ip,
-        port: 22,
+        port: SSH_PORT,
         sshUser: username,
         password,
       });
       if (res.kind === "host_key_untrusted") {
         setPendingFingerprint(res.fingerprint);
         setPendingHost(res.host);
+        setPendingPort(SSH_PORT);
         setStatus(`Host key untrusted: ${res.fingerprint}. Confirm to trust.`);
         return;
       }
       // Ok
       setStatus(`Connected to ${ip}. Installing key…`);
-      await invoke("install_device_key", { host: ip, port: 22, sshUser: username, password });
-      setStatus(`Device ${ip} ready. Key installed.`);
+      await invoke("install_device_key", { host: ip, port: SSH_PORT, sshUser: username, password });
+      setStatus(`Device ${ip} connected. Key installed — configure its role above.`);
       onAdded?.(ip);
     } catch (e) {
       setStatus(`Connect failed: ${String(e)}`);
@@ -67,9 +90,9 @@ export function DeviceAddDialog({ onAdded }: { onAdded?: (ip: string) => void })
   }
 
   async function trust() {
-    if (!pendingHost || !pendingFingerprint) return;
+    if (!pendingHost || !pendingFingerprint || pendingPort === null) return;
     try {
-      await invoke("trust_host_key", { host: pendingHost, fingerprint: pendingFingerprint });
+      await invoke("trust_host_key", { host: pendingHost, port: pendingPort, fingerprint: pendingFingerprint });
       setStatus(`Trusted ${pendingHost}. Retrying connect…`);
       setPendingFingerprint(null);
       await connect();
@@ -82,7 +105,7 @@ export function DeviceAddDialog({ onAdded }: { onAdded?: (ip: string) => void })
     <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
       <h2 className="text-lg font-medium">Add device</h2>
 
-      <div className="flex gap-2">
+      <div className="flex gap-2 items-center flex-wrap">
         <button
           onClick={scan}
           disabled={scanning}
@@ -90,34 +113,36 @@ export function DeviceAddDialog({ onAdded }: { onAdded?: (ip: string) => void })
         >
           {scanning ? "Scanning…" : "Scan network"}
         </button>
-        <span className="text-xs text-zinc-500 self-center">Lists SSH hosts on the LAN via mDNS (_ssh._tcp)</span>
+        <span className="text-xs text-zinc-500 self-center">Probes your subnet for SSH — may take about a minute.</span>
       </div>
 
-      {devices.length > 0 && (
+      {swept.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs font-medium text-zinc-400">Discovered:</p>
+          <p className="text-xs font-medium text-zinc-400">On your network{scannedSubnet ? ` (${scannedSubnet})` : ""} — click to fill:</p>
           <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800 overflow-hidden">
-            {devices.map((d) => (
+            {swept.map((d) => (
               <li
                 key={d.ip}
                 className="flex items-center justify-between bg-zinc-950 px-3 py-2 hover:bg-zinc-900 cursor-pointer"
                 onClick={() => setIp(d.ip)}
               >
-                <div>
+                <div className="min-w-0">
                   <span className="font-mono text-sm">{d.ip}</span>
-                  <span className="ml-2 text-xs text-zinc-400">{d.hostname}:{d.port}</span>
                   {d.likely_pi && (
                     <span className="ml-2 inline-flex items-center rounded-full bg-emerald-900/50 px-2 py-0.5 text-[10px] font-medium text-emerald-300 ring-1 ring-emerald-800">
                       likely Pi
                     </span>
                   )}
+                  <div className="text-[11px] text-zinc-500 font-mono truncate">{d.banner ?? `port ${d.port} open`}</div>
                 </div>
-                <span className="text-xs text-zinc-500">click to fill</span>
+                <span className="text-xs text-zinc-500 shrink-0 ml-2">click to fill</span>
               </li>
             ))}
           </ul>
         </div>
       )}
+
+
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <label className="flex flex-col gap-1">

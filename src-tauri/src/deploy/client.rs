@@ -150,6 +150,7 @@ mod tests {
         cfg.clients.push(crate::config::ClientEntry {
             ip: "192.168.1.121".to_string(),
             name: None,
+            deployed: false,
             ssh_user: "pi".to_string(),
             output_volume: 70,
             latency_ms: 0,

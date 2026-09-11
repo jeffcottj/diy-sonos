@@ -54,6 +54,8 @@ pub struct ClientEntry {
     pub ip: String,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub deployed: bool,
     #[serde(default = "default_ssh_user")]
     pub ssh_user: String,
     #[serde(default = "default_output_volume")]
@@ -72,6 +74,8 @@ pub struct AppConfig {
     pub server_ip: String,
     #[serde(default)]
     pub server_combo: bool,
+    #[serde(default)]
+    pub server_deployed: bool,
     #[serde(default)]
     pub clients: Vec<ClientEntry>,
     #[serde(default = "default_profile")]
@@ -186,6 +190,7 @@ impl Default for AppConfig {
             ssh_user: default_ssh_user(),
             server_ip: String::new(),
             server_combo: false,
+            server_deployed: false,
             clients: Vec::new(),
             profile: default_profile(),
             spotify: SpotifyConfig::default(),
@@ -313,6 +318,26 @@ pub fn validate_snapclient_output_volume(value: i32) -> Result<(), String> {
     Ok(())
 }
 
+pub fn validate_snapserver_buffer_ms(value: u32) -> Result<(), String> {
+    if !(100..=10000).contains(&value) {
+        return Err(format!(
+            "snapserver.buffer_ms '{}' must be between 100 and 10000",
+            value
+        ));
+    }
+    Ok(())
+}
+
+pub fn validate_snapclient_latency_ms(value: i16) -> Result<(), String> {
+    if !(-5000..=5000).contains(&value) {
+        return Err(format!(
+            "snapclient.latency_ms '{}' must be between -5000 and 5000",
+            value
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_snapclient_output_volume_u8(value: u8) -> Result<(), String> {
     // u8 always 0..255, but limit 0..100
     if value > 100 {
@@ -344,6 +369,12 @@ pub fn validate_config(cfg: &AppConfig) -> Result<(), Vec<String>> {
     if let Err(e) = validate_snapclient_output_volume_u8(cfg.snapclient.output_volume) {
         errors.push(e);
     }
+    if let Err(e) = validate_snapserver_buffer_ms(cfg.snapserver.buffer_ms) {
+        errors.push(e);
+    }
+    if let Err(e) = validate_snapclient_latency_ms(cfg.snapclient.latency_ms) {
+        errors.push(e);
+    }
     for client in &cfg.clients {
         if let Err(e) = validate_server_ip(&client.ip) {
             errors.push(format!("clients[].ip '{}': {}", client.ip, e));
@@ -353,6 +384,9 @@ pub fn validate_config(cfg: &AppConfig) -> Result<(), Vec<String>> {
         }
         if let Err(e) = validate_snapclient_audio_device(&client.audio_device) {
             errors.push(format!("clients[{}].audio_device: {}", client.ip, e));
+        }
+        if let Err(e) = validate_snapclient_latency_ms(client.latency_ms) {
+            errors.push(format!("clients[{}].latency_ms: {}", client.ip, e));
         }
     }
     if errors.is_empty() {
@@ -426,7 +460,13 @@ pub fn load_config() -> Result<AppConfig, anyhow::Error> {
     Ok(cfg)
 }
 
+/// Save exactly what the UI shows: no hidden preset rewriting (the Settings
+/// form fills preset values into the visible fields, `custom` when diverged).
+/// Rejects out-of-range audio tuning before anything is written.
 pub fn save_config(cfg: &AppConfig) -> Result<(), anyhow::Error> {
+    if let Err(errors) = validate_config(cfg) {
+        return Err(anyhow::anyhow!("invalid config: {}", errors.join("; ")));
+    }
     let path = config_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -513,6 +553,56 @@ mod tests {
         // Other defaults unchanged
         assert_eq!(cfg.spotify.bitrate, 320);
         assert_eq!(cfg.snapclient.output_volume, 90);
+    }
+
+    #[test]
+    fn save_persists_exactly_and_rejects_bad_tuning() {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        // Mismatched profile + codec round-trips untouched (no rewriting).
+        let mut cfg = AppConfig::default();
+        cfg.server_ip = "192.168.68.104".to_string();
+        cfg.profile = "custom".to_string();
+        cfg.snapserver.codec = "pcm".to_string();
+        cfg.snapserver.buffer_ms = 1234;
+        cfg.snapclient.latency_ms = -42;
+        save_config(&cfg).unwrap();
+        let stored = load_config().unwrap();
+        assert_eq!(stored.profile, "custom");
+        assert_eq!(stored.snapserver.codec, "pcm");
+        assert_eq!(stored.snapserver.buffer_ms, 1234);
+        assert_eq!(stored.snapclient.latency_ms, -42);
+        // Out-of-range tuning is rejected before anything is written.
+        let mut bad = stored.clone();
+        bad.snapserver.buffer_ms = 50;
+        assert!(save_config(&bad).is_err());
+        bad.snapserver.buffer_ms = 1234;
+        bad.snapclient.latency_ms = 9000;
+        assert!(save_config(&bad).is_err());
+        let stored2 = load_config().unwrap();
+        assert_eq!(stored2.snapserver.buffer_ms, 1234);
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
+    #[test]
+    fn tuning_validators_accept_sane_reject_absurd() {
+        assert!(super::validate_snapserver_buffer_ms(1000).is_ok());
+        assert!(super::validate_snapserver_buffer_ms(100).is_ok());
+        assert!(super::validate_snapserver_buffer_ms(99).is_err());
+        assert!(super::validate_snapserver_buffer_ms(20000).is_err());
+        assert!(super::validate_snapclient_latency_ms(0).is_ok());
+        assert!(super::validate_snapclient_latency_ms(-20).is_ok());
+        assert!(super::validate_snapclient_latency_ms(5001).is_err());
+        assert!(super::validate_snapclient_latency_ms(-5001).is_err());
+    }
+
+    #[test]
+    fn deployed_flags_default_false_for_legacy_files() {
+        let cfg: AppConfig =
+            serde_yaml::from_str("server_ip: 192.168.68.104\nclients:\n  - ip: 192.168.68.114\n")
+                .unwrap();
+        assert!(!cfg.server_deployed);
+        assert!(!cfg.clients[0].deployed);
     }
 
     #[test]
@@ -616,6 +706,7 @@ spotify:
             ClientEntry {
                 ip: "192.168.1.121".to_string(),
                 name: None,
+                deployed: false,
                 ssh_user: "pi".to_string(),
                 output_volume: 70,
                 latency_ms: 0,
@@ -624,6 +715,7 @@ spotify:
             ClientEntry {
                 ip: "192.168.1.122".to_string(),
                 name: None,
+                deployed: false,
                 ssh_user: "pi".to_string(),
                 output_volume: 80,
                 latency_ms: 0,

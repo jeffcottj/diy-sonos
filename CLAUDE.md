@@ -117,11 +117,11 @@ OAuth: ported from `scripts/librespot-auth-helper.sh:28-56`. If `has_cached_cred
 
 ## Frontend
 
-- `src/App.tsx` — shell with tabs (Wizard, Devices, Dashboard, Settings), loads config via `load_config`, stores `server_ip` in zustand.
+- `src/App.tsx` — shell with tabs (Devices, Dashboard, Settings), loads config via `load_config`, stores `server_ip` in zustand.
 - `src/components/DeviceAddDialog.tsx` — manual IP + Scan network (mDNS list, likely-Pi badge) + first-connect flow (password → HostKeyUntrusted confirm → key install).
 - `src/components/Dashboard.tsx` — WebSocket to `ws://<server_ip>:1780/jsonrpc`, live groups/clients/streams, volume/mute/latency/rename/group assignment, delete stale clients, offline badge.
 - `src/components/ConnectSpotify.tsx` — starts OAuth, listens for `oauth-url` events, shows clickable URL.
-- `src/components/Wizard.tsx` — first-run wizard (add server+clients → profile → deploy → OAuth → done).
+- `src/components/DeviceList.tsx` — connected-device roster (trust store + liveness + configured roles) with inline Configure/Edit and Forget.
 - `src/components/Settings.tsx` — all config fields, profile switch, per-client `name`/`latency_ms`/`audio_device`.
 - `src/store.ts` — zustand store for `serverIp` + devices.
 

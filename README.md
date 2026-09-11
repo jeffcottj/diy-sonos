@@ -42,20 +42,17 @@ The app is **unsigned** (public GitHub Releases, no Apple Developer ID / EV cert
 
 Updates: the app checks `https://github.com/jeffcottj/diy-sonos/releases/latest/download/latest.json` via `tauri-plugin-updater`. When an update is available you’ll see a prompt; it installs on restart.
 
-## First-run wizard
+## Getting started
 
-Open the app:
+Open the app (Devices tab):
 
-1. **Add server & clients** — Enter the IP for each Pi manually, or click **Scan network** to browse `_ssh._tcp.local` via mDNS (5 s). Hosts matching `raspberrypi|raspi|pi|dietpi|ubuntu` get a “likely Pi” badge; click a result to prefill.
+1. **Add server & clients** — Enter the IP for each Pi manually, or click **Scan network** to sweep your subnet for SSH (may take about a minute); click a result to prefill.
    - First connect asks for SSH username + password. The app generates its own ed25519 keypair (`app_data_dir()/id_ed25519`, 0600) and installs the public key into `~/.ssh/authorized_keys` on the device (like `ssh-copy-id`). The first host key is shown as `SHA256:…`; confirm to trust (TOFU, stored in `app_data_dir()/known_hosts`). A later mismatch is a hard error.
    - Sudo runs as `sudo -S -p ''` with the password fed over stdin per command; password is held in memory only during the operation, never written to disk. Passwordless-sudo devices work transparently.
 
-2. **Audio profile** — Choose `basic` (flac, buffer 1000 ms, latency 0) or `advanced` (pcm, buffer 800 ms, latency -20). This sets `snapserver.codec`, `snapserver.buffer_ms`, and `snapclient.latency_ms`. You can change it later in Settings.
+2. **Configure roles** — Each connected device shows live status plus its configured role (`server` / `client`). Unconfigured devices get a **Configure** button prompting for role and details (combo toggle for servers, display name for clients).
 
-3. **Deploy** — One-click deploy. The app:
-   - Preflights SSH to all devices (fail fast)
-   - Deploys the server role (or combo server+client) → surfaces **Connect Spotify** → deploys each client in sequence → shows pass/fail summary
-   - Streams live logs per device (`deploy-log {deviceId, step, level, line}`) and step checklist (`deploy-status {deviceId, phase, done}`)
+3. **Audio** — In Settings, pick the `basic` (flac, buffer 1000 ms, latency 0) or `advanced` (pcm, buffer 800 ms, latency -20) preset to fill the fields, or edit codec / buffer / latency directly — that flips the profile to `Custom`. Saved exactly as shown.
 
 4. **Connect Spotify** — If credentials are already cached (`/var/cache/librespot/*credentials*` or `*.json`), the step is skipped. Otherwise the app:
    - Restarts `librespot.service` on the server
@@ -67,12 +64,12 @@ Open the app:
 
 ## Using the app
 
-- **Devices** tab — Current config (`server_ip`, `ssh_user`, client list). Add/edit devices, re-run deploys, view per-device doctor results and deploy logs.
+- **Devices** tab — Connected-device roster with live status and configured roles (`server` / `client`). Scan, add, configure, and forget devices; **Connect Spotify** lives here too.
 - **Dashboard** tab — Live Snapcast control. The frontend opens `new WebSocket("ws://<server_ip>:1780/jsonrpc")` directly, sends `Server.GetStatus`, and keeps state live from notifications (`Client.OnConnect/OnDisconnect/OnVolumeChanged/...`, `Group.OnMute/OnStreamChanged`, `Server.OnUpdate`). Controls:
   - Per-client: volume slider (`Client.SetVolume`), mute, latency (`Client.SetLatency`), rename (`Client.SetName` seeded from `clients[].name`)
   - Per-group: group mute (`Group.SetMute`), drag/toggle clients between groups (`Group.SetClients`), delete stale clients (`Server.DeleteClient`)
   - Badges: client online/offline (`Client.OnConnect/OnDisconnect`), stream idle/playing from `stream.status`
-  - Clients are matched to app devices by `client.host.ip`
+  - Clients are matched to app devices by `client.host.ip` (`::ffff:` IPv4-mapped prefix stripped for display)
   - If Snapcast or the webview rejects the cross-origin WebSocket (Origin check), the Rust fallback in `snapcast.rs` (tokio-tungstenite) bridges via Tauri events — same store shape.
 
 - **Settings** tab — All `config.yml` fields (profile, spotify/snapserver/snapclient sections, per-client `name`/`latency_ms`/`audio_device`). Changes that affect rendered files prompt **Apply changes** → re-run deploy for affected devices.

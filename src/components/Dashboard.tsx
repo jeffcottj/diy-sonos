@@ -26,6 +26,10 @@ type SnapStatus = {
 
 type Props = { serverIp: string };
 
+function displayIp(ip: string): string {
+  return ip.startsWith("::ffff:") ? ip.slice("::ffff:".length) : ip;
+}
+
 export function Dashboard({ serverIp }: Props) {
   const [status, setStatus] = useState<SnapStatus | null>(null);
   const [wsState, setWsState] = useState<"idle" | "connecting" | "open" | "error">("idle");
@@ -115,12 +119,34 @@ export function Dashboard({ serverIp }: Props) {
 
   const streamStatus = status?.streams?.[0]?.status ?? "unknown";
   const streamName = status?.streams?.[0]?.uri?.query?.name ?? "Spotify";
+  const offlineClients = (status?.groups ?? []).flatMap((g) => g.clients.filter((c) => !c.connected));
+  const offlineCount = offlineClients.length;
+
+  function sortedClients(group: SnapGroup): SnapClient[] {
+    return [...group.clients].sort((a, b) => Number(b.connected) - Number(a.connected));
+  }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h2 className="text-lg font-medium">Dashboard</h2>
         <span className="text-xs px-2 py-1 rounded-full bg-zinc-800 text-zinc-400">{wsState}</span>
+        {offlineCount > 0 && (
+          <>
+            <span className="text-xs px-2 py-1 rounded-full bg-amber-900/50 text-amber-300 ring-1 ring-amber-800">
+              {offlineCount} offline / stale
+            </span>
+            <button
+              onClick={() => {
+                for (const c of offlineClients) rpc("Server.DeleteClient", { id: c.id });
+              }}
+              className="text-xs px-2 py-1 rounded-full bg-zinc-800 text-red-300 hover:text-red-200"
+              title="Removes disconnected client records from snapserver (they reappear on next connect)"
+            >
+              Delete offline
+            </button>
+          </>
+        )}
         <span className="text-xs px-2 py-1 rounded-full bg-zinc-800 text-zinc-300">
           stream {streamName}: {streamStatus}
         </span>
@@ -160,7 +186,7 @@ export function Dashboard({ serverIp }: Props) {
               </div>
 
               <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                {group.clients.map((client) => (
+                {sortedClients(group).map((client) => (
                   <div key={client.id} className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
                     <div className="flex items-center justify-between">
                       <div>
@@ -173,7 +199,17 @@ export function Dashboard({ serverIp }: Props) {
                           className="bg-transparent text-sm font-medium focus:bg-zinc-800 rounded px-1"
                         />
                         <div className="text-[11px] text-zinc-500">
-                          {client.host.ip} • {client.host.mac} • {client.connected ? "online" : "offline"}
+                          {displayIp(client.host.ip)} • {client.host.mac} •{" "}
+                          {client.connected ? (
+                            <span className="text-emerald-400">online</span>
+                          ) : (
+                            <span
+                              className="text-amber-300"
+                              title="Stale record if this device no longer exists — use Delete offline above"
+                            >
+                              offline
+                            </span>
+                          )}
                         </div>
                       </div>
                       <button
