@@ -27,6 +27,11 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
